@@ -1,0 +1,24 @@
+af             =  1.000   ! Today expansion factor == 1+zi
+lbox           = 142.04546 ! Size of the box at z=0 (NB: in Mpc! ==> 479 Mpc/h=684.286 Mpc)
+H_f            =  70.400  ! Hubble constant (in Km/s/Mpc) at z=0
+omega_f        =   0.272  ! Omega matter at z=0 (ex: 0.3)
+lambda_f       =   0.728  ! Omega lambda at z=0 (ex: 0.7)
+npart          = 100 ! Minimum number of particles per halo (ex:10)
+method         = MSM ! choose between FOF, HOP, MSM etc .. (view ReadMe for details).
+cdm            =  .false.
+b              =  0.02    ! fof parameter "b" (usually b=0.2) (Not used in adaptahop)
+nvoisins       =  20      ! parameter for adaptahop (usually 20)
+nhop           =  20      ! parameter for adaptahop (usually 20)
+rhot           =  178.0   ! parameter for adaptahop (80 coreespond to b = 0.2)
+fudge          = 5.       ! parameter for adaptahop (usually 4.) 
+fudgepsilon    = 0.00002   ! parameter for adaptahop (usually 0.05)
+alphap         = 2.5      ! parameter for adaptahop (usually 1.)
+verbose        = .true.  ! verbose parameter for both halo finder
+megaverbose    = .true.  ! parameter for adaptahop
+nsteps         = 1026 ! Number of time steps to analyse
+FlagPeriod     =  1       ! Periodic boundaries (1:True)
+dump_stars     = .true. 
+nchem          = 0 
+SC             = .true.   ! Activate the com in concentric spheres (only used in finding halo center)
+dcell_min      = 4e-05 ! The smallest possible cell size in Mpc (only used in finding halo center)
+eps_SC         = 0.3      ! Reduction fraction of the concentric shpere radius (only used in finding halo center)
