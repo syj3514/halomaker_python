@@ -87,21 +87,21 @@ atexit.unregister(flush)
 # useful types :
 #======================================================================
 class vector:
-    __slots__ = ['x', 'y', 'z']
+    __slots__ = ["x", "y", "z"]
     def __init__(self):
         self.x = None
         self.y = None
         self.z = None
 
 class shape:
-    __slots__ = ['a', 'b', 'c']
+    __slots__ = ["a", "b", "c"]
     def __init__(self):
         self.a = None
         self.b = None
         self.c = None
 
 class baryon:
-    __slots__ = ['rvir', 'mvir', 'tvir', 'cvel']
+    __slots__ = ["rvir", "mvir", "tvir", "cvel"]
     def __init__(self):
         self.rvir = None
         self.mvir = None
@@ -109,14 +109,14 @@ class baryon:
         self.cvel = None
 
 class hprofile:
-    __slots__ = ['rho_0', 'r_c']
+    __slots__ = ["rho_0", "r_c"]
     def __init__(self):
         self.rho_0 = None
         self.r_c = None
 
 liste_halos_o0:list['halo'] = []
 class halo:
-    __slots__ = ['datas', 'sh', 'p', 'v', 'L', 'halo_profile', 'my_number', 'my_timestep', 'nbsub', 'hosthalo', 'hostsub', 'level', 'nextsub', 'm', 'r', 'spin', 'sigma', 'ek', 'ep', 'et']
+    __slots__ = ["datas", "sh", "p", "v", "L", "halo_profile", "my_number", "my_timestep", "nbsub", "hosthalo", "hostsub", "level", "nextsub", "m", "r", "spin", "sigma", "ek", "ep", "et"]
     def __init__(self):
         self.datas = baryon()
         self.sh = shape()
@@ -313,7 +313,7 @@ fudge,alphap,epsilon,fudgepsilon = np.float64(0.0), np.float64(0.0), np.float64(
 pos_shift = np.zeros(3, dtype=np.float64)
 
 class grp:
-    __slots__ = ['nhnei', 'njunk', 'isad_gr', 'rho_saddle_gr']
+    __slots__ = ["nhnei", "njunk", "isad_gr", "rho_saddle_gr"]
     def __init__(self):
         self.nhnei = None
         self.njunk = None # To avoid missalignement in memory
@@ -321,7 +321,7 @@ class grp:
         self.rho_saddle_gr = None # real(kind=8), dimension(:),pointer
 
 class supernode:
-    __slots__ = ['level','mother','firstchild','nsisters','sister','rho_saddle','density','densmax','radius','mass','truemass','position']
+    __slots__ = ["level","mother","firstchild","nsisters","sister","rho_saddle","density","densmax","radius","mass","truemass","position"]
     def __init__(self):
         self.level = None
         self.mother = None

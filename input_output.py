@@ -8,7 +8,7 @@ from multiprocessing import Pool
 
 #///////////////////////////////////////////////////////////////////////
 #***********************************************************************
-def read_data():
+def read_data_10():
     '''
      This routine read the output of N-body simulations (particles positions and speeds, 
      cosmological and technical parameters)
@@ -51,7 +51,7 @@ def read_data():
     if(H.simtype=='SN'): raise NotImplementedError("`SN` format is not implemented yet")
 
     elif(H.simtype=='Ra'):
-        read_ramses(name_of_file)
+        read_ramses_100(name_of_file)
         # Computation of omega_t = omega_matter(t)
         #
         #                            omega_f*(1+z)^3
@@ -64,7 +64,7 @@ def read_data():
         H.omega_t  = H.omega_f*(H.af/H.aexp)**3
         H.omega_t  = H.omega_t/(H.omega_t+(1.-H.omega_f-H.omega_lambda_f)*(H.af/H.aexp)**2+H.omega_lambda_f)
     elif(H.simtype[:2]=='Ra'):
-        read_ramses_new(name_of_file, rver=H.simtype)
+        read_ramses_new_101(name_of_file, rver=H.simtype)
         H.omega_t  = H.omega_f*(H.af/H.aexp)**3
         H.omega_t  = H.omega_t/(H.omega_t+(1.-H.omega_f-H.omega_lambda_f)*(H.af/H.aexp)**2+H.omega_lambda_f)
     elif(H.simtype=='Nzo'): raise NotImplementedError("`Nzo` format is not implemented yet")
@@ -72,9 +72,9 @@ def read_data():
     else: raise NotImplementedError(f"> Don''t know the snapshot format: `{H.simtype}`")
 
     print(f"> aexp = {H.aexp}")
-    pos = mem['pos']
+    pos = mem['pos_10']
     print(f"> min max position (in box units)   : {np.min(pos)},{np.max(pos)}")
-    vel = mem['vel']
+    vel = mem['vel_10']
     print(f"> min max velocities (in km/s)      : {np.min(vel)},{np.max(vel)}")
     print(f"> Reading done.")
 
@@ -93,7 +93,7 @@ def skip_records(f, skip_num=1):
                         'this record - check header dtype')
 
 #***********************************************************************
-def read_ramses(repository):
+def read_ramses_100(repository):
     ''' This routine reads DM particles dumped in the RAMSES format.
     implicit none
 
@@ -170,9 +170,9 @@ def read_ramses(repository):
     print(f"> Found {H.npart} particles")
     print(f"> Reading positions and masses...")
     
-    H.allocate('pos', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('vel', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('mass', (H.npart,), dtype=np.float64)
+    H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('mass_10', (H.npart,), dtype=np.float64)
   
     iterobj = range(1,H.ncpu+1)
     if(H.TQDM):
@@ -183,46 +183,46 @@ def read_ramses(repository):
             ncpu2, = f.read_ints()
             ndim2, = f.read_ints()
             npart2, = f.read_ints()
-            H.allocate('tmpp', (npart2, ndim2), dtype=np.float64)
-            H.allocate('tmpv', (npart2, ndim2), dtype=np.float64)
-            H.allocate('tmpm', (npart2,), dtype=np.float64)
-            H.allocate('idp', (npart2,), dtype=np.int32)
+            tmpp = np.empty((npart2, ndim2), dtype=np.float64)
+            tmpv = np.empty((npart2, ndim2), dtype=np.float64)
+            tmpm = np.empty(npart2, dtype=np.float64)
+            idp = np.empty(npart2, dtype=np.int32)
             
             # read all particle positions
             for idim0 in range(H.ndim):
-                mem['tmpp'][:,idim0] = f.read_reals()
+                tmpp[:,idim0] = f.read_reals()
             # read all particle velocities
             for idim0 in range(H.ndim):
-                mem['tmpv'][:,idim0] = f.read_reals()
+                tmpv[:,idim0] = f.read_reals()
             # read all particle masses
-            mem['tmpm'][:] = f.read_reals()
+            tmpm[:] = f.read_reals()
             # read all particle ids
-            mem['idp'][:] = f.read_ints()
+            idp[:] = f.read_ints()
 
         # now sort DM particles in ascending id order
         for idim0 in range(H.ndim):
             # put all positions between -0.5 and 0.5
-            mem['pos'][mem['idp']-1,idim0] = mem['tmpp'][:,idim0] - 0.5
+            mem['pos_10'][idp-1,idim0] = tmpp[:,idim0] - 0.5
             # convert code units to km/s 
-            mem['vel'][mem['idp']-1,idim0] = mem['tmpv'][:,idim0]*scale_l/scale_t*1e-5
-            mem['mass'][mem['idp']-1] = mem['tmpm'][:]
-        H.deallocate('tmpp','tmpv','tmpm','idp')
+            mem['vel_10'][idp-1,idim0] = tmpv[:,idim0]*scale_l/scale_t*1e-5
+            mem['mass_10'][idp-1] = tmpm[:]
+        del tmpp; del tmpv; del tmpm; del idp
     
-        mtot = np.sum(mem['mass'])
+        mtot = np.sum(mem['mass_10'])
         # that is for the dark matter so let's add baryons now if there are any 
         # and renormalization flag is on ##
-        massres = np.min(mem['mass'])*H.mboxp*1e11
-        H.massp   = np.min(mem['mass'])
+        massres = np.min(mem['mass_10'])*H.mboxp*1e11
+        H.massp   = np.min(mem['mass_10'])
         print(f"> particle mass (in M_sun)               = {massres}")
         if(H.RENORM):
             massres /= mtot
             H.massp /= mtot
             print(f"> particle mass (in M_sun) after renorm  = {massres}")
         if(H.BIG_RUN):
-            H.deallocate('mass')
+            H.deallocate('mass_10')
 #***********************************************************************
-# def _read_ramses_new(icpu, cursors, nsize, kwargs):
-def _read_ramses_new(icpu, kwargs):
+# def _read_ramses_new_1010(icpu, cursors, nsize, kwargs):
+def _read_ramses_new_1010(icpu, kwargs):
     repository = kwargs['repository']
     rver = kwargs['rver']
     nchar = kwargs['nchar']
@@ -241,12 +241,12 @@ def _read_ramses_new(icpu, kwargs):
         nsink, = f.read_ints()
         # assert nsize[icpu-1] == npart2
 
-        tmpp = np.empty((npart2,3), dtype=np.float64)#mem['pos_tmp'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
-        tmpv = np.empty((npart2,3), dtype=np.float64)#mem['vel_tmp'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
-        tmpm = np.empty(npart2, dtype=np.float64)#mem['mass_tmp'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1]].view()           
+        tmpp = np.empty((npart2,3), dtype=np.float64)#mem['pos_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
+        tmpv = np.empty((npart2,3), dtype=np.float64)#mem['vel_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
+        tmpm = np.empty(npart2, dtype=np.float64)#mem['mass_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1]].view()           
         
         # read all particle positions
-        # print(icpu, tmpp[:,0].shape, nsize[icpu-1], npart2, cursors[icpu-1], mem['pos_tmp'].shape)
+        # print(icpu, tmpp[:,0].shape, nsize[icpu-1], npart2, cursors[icpu-1], mem['pos_tmp_101'].shape)
         for idim0 in range(H.ndim):
             tmpp[:,idim0] = f.read_reals()
         # read all particle velocities
@@ -275,13 +275,13 @@ def _read_ramses_new(icpu, kwargs):
     npart_tmp = np.sum(mask)
     for idim0 in range(H.ndim):
         # put all positions between -0.5 and 0.5
-        mem['pos_tmp'][idp[mask]-1,idim0] = tmpp[mask,idim0]-0.5
+        mem['pos_tmp_101'][idp[mask]-1,idim0] = tmpp[mask,idim0]-0.5
         # convert code units to km/s 
-        mem['vel_tmp'][idp[mask]-1,idim0] = tmpv[mask,idim0]*scale_l/scale_t*1e-5
-        mem['mass_tmp'][idp[mask]-1] = tmpm[mask]
+        mem['vel_tmp_101'][idp[mask]-1,idim0] = tmpv[mask,idim0]*scale_l/scale_t*1e-5
+        mem['mass_tmp_101'][idp[mask]-1] = tmpm[mask]
     return npart_tmp
 #***********************************************************************
-def read_ramses_new(repository, rver='Ra3'):
+def read_ramses_new_101(repository, rver='Ra3'):
     ''' This routine reads DM particles dumped in the RAMSES format.
     implicit none
 
@@ -408,9 +408,9 @@ def read_ramses_new(repository, rver='Ra3'):
     print(f"\t        {nstar} star particles")
     print(f"\t> Reading positions and masses...")
     
-    H.allocate('pos_tmp', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('vel_tmp', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('mass_tmp', (H.npart,), dtype=np.float64)
+    H.allocate('pos_tmp_101', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('vel_tmp_101', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('mass_tmp_101', (H.npart,), dtype=np.float64)
   
     ##### MultiProcessing Start #####
     # H.ncpu=4
@@ -422,13 +422,11 @@ def read_ramses_new(repository, rver='Ra3'):
             iterobj = tqdm(range(1,H.ncpu+1), desc=f"Reading parts(nbPes={H.nbPes})", unit="cpu")
         npart_tmp = 0
         for icpu1 in iterobj:
-            # npart_tmp += _read_ramses_new(icpu1, cursors, nsize, kwargs)
-            npart_tmp += _read_ramses_new(icpu1, kwargs)
+            npart_tmp += _read_ramses_new_1010(icpu1, kwargs)
     else: # Multiprocessing
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         with Pool(processes=H.nbPes) as pool:
-            # async_results = [pool.apply_async(_read_ramses_new, (icpu1, cursors, nsize, kwargs)) for icpu1 in iterobj]
-            async_results = [pool.apply_async(_read_ramses_new, (icpu1, kwargs)) for icpu1 in iterobj]
+            async_results = [pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs)) for icpu1 in iterobj]
             npart_tmp = 0
             iterobj = async_results
             if(H.TQDM):
@@ -440,30 +438,30 @@ def read_ramses_new(repository, rver='Ra3'):
     H.npart = npart_tmp
     H.nbodies = H.npart
     print(f"\t> Found {H.npart} DM particles after masking")
-    H.allocate('pos', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('vel', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('mass', (H.npart,), dtype=np.float64)
-    mem['pos'][:H.npart, :] = mem['pos_tmp'][:H.npart, :]
-    mem['vel'][:H.npart, :] = mem['vel_tmp'][:H.npart, :]
-    mem['mass'][:H.npart] = mem['mass_tmp'][:H.npart]
-    H.deallocate('pos_tmp','vel_tmp','mass_tmp')
+    H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
+    H.allocate('mass_10', (H.npart,), dtype=np.float64)
+    mem['pos_10'][:H.npart, :] = mem['pos_tmp_101'][:H.npart, :]
+    mem['vel_10'][:H.npart, :] = mem['vel_tmp_101'][:H.npart, :]
+    mem['mass_10'][:H.npart] = mem['mass_tmp_101'][:H.npart]
+    H.deallocate('pos_tmp_101','vel_tmp_101','mass_tmp_101')
 
-    mtot = np.sum(mem['mass'])
+    mtot = np.sum(mem['mass_10'])
     # that is for the dark matter so let's add baryons now if there are any 
     # and renormalization flag is on ##
-    massres = np.min(mem['mass'])*H.mboxp*1e11
-    H.massp   = np.min(mem['mass'])
+    massres = np.min(mem['mass_10'])*H.mboxp*1e11
+    H.massp   = np.min(mem['mass_10'])
     print(f"\t> particle mass (in M_sun)               = {massres}")
     if(H.RENORM):
         massres /= mtot
         H.massp /= mtot
         print(f"\t> particle mass (in M_sun) after renorm  = {massres}")
     if(H.BIG_RUN):
-        H.deallocate('mass')
+        H.deallocate('mass_10')
     print(f"\t#################################\n")
 
 #***********************************************************************
-def write_tree_brick():
+def write_tree_brick_1d():
     '''
     This subroutine writes the information relevant to building a halo 
     merging tree (using the build_tree program) i.e. for each halo:
@@ -494,7 +492,7 @@ def write_tree_brick():
         if(H.write_resim_masses):
             f44 = FortranFile(f'{H.data_dir}/resim_masses.dat', 'w')
             f44.write_record(H.nbodies)
-            f44.write_record(mem['mass'])
+            f44.write_record(mem['mass_10'])
             f44.close()
             H.write_resim_masses = False
 
@@ -513,26 +511,26 @@ def write_tree_brick():
     f44.write_record(H.nb_of_halos, H.nb_of_subhalos)
     for i0 in range(H.nb_of_halos + H.nb_of_subhalos):
         # write list of particles in each halo
-        H.allocate('members',mem['nb_of_parts_o0'][i0+1], dtype=np.int32)
+        members = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.int32)
         if(H.dump_dms):
-            H.allocate('mass_memb', mem['nb_of_parts_o0'][i0+1], dtype=np.float64)
-            H.allocate('pos_memb', (mem['nb_of_parts_o0'][i0+1],3), dtype=np.float64)
-            H.allocate('vel_memb', (mem['nb_of_parts_o0'][i0+1],3), dtype=np.float64)
-            H.allocate('mdump', mem['nb_of_parts_o0'][i0+1], dtype=np.float64)
-        start = mem['first_part_oo'][i0+1]
-        for j0 in range(mem['nb_of_parts_o0'][i0+1]):
-            mem['members'][j0] = start
+            mass_memb = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.float64)
+            pos_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
+            vel_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
+            mdump = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.float64)
+        start = mem['first_part_oo_1'][i0+1]
+        for j0 in range(mem['nb_of_parts_o0_1'][i0+1]):
+            members[j0] = start
             if(H.dump_dms):
-                mem['mass_memb'][j0] = mem['mass'][start-1]
-                mem['pos_memb'][j0,0]=mem['pos'][start-1,0]
-                mem['pos_memb'][j0,1]=mem['pos'][start-1,1]
-                mem['pos_memb'][j0,2]=mem['pos'][start-1,2]
-                mem['vel_memb'][j0,0]=mem['vel'][start-1,0]
-                mem['vel_memb'][j0,1]=mem['vel'][start-1,1]
-                mem['vel_memb'][j0,2]=mem['vel'][start-1,2]
-            start = mem['linked_list_oo'][start]
-        f44.write_record(mem['nb_of_parts_o0'][i0+1])
-        f44.write_record(mem['members'])
+                mass_memb[j0] = mem['mass_10'][start-1]
+                pos_memb[j0,0]=mem['pos_10'][start-1,0]
+                pos_memb[j0,1]=mem['pos_10'][start-1,1]
+                pos_memb[j0,2]=mem['pos_10'][start-1,2]
+                vel_memb[j0,0]=mem['vel_10'][start-1,0]
+                vel_memb[j0,1]=mem['vel_10'][start-1,1]
+                vel_memb[j0,2]=mem['vel_10'][start-1,2]
+            start = mem['linked_list_oo_1'][start]
+        f44.write_record(mem['nb_of_parts_o0_1'][i0+1])
+        f44.write_record(members)
 
         if(H.dump_dms):
             ncharg = f"{H.liste_halos_o0[i0+1].my_number:07d}"
@@ -544,24 +542,24 @@ def write_tree_brick():
             f9.write_record(H.liste_halos_o0[i0+1].p.x,H.liste_halos_o0[i0+1].p.y,H.liste_halos_o0[i0+1].p.z)
             f9.write_record(H.liste_halos_o0[i0+1].v.x,H.liste_halos_o0[i0+1].v.y,H.liste_halos_o0[i0+1].v.z)
             f9.write_record(H.liste_halos_o0[i0+1].L.x,H.liste_halos_o0[i0+1].L.y,H.liste_halos_o0[i0+1].L.z)
-            f9.write_record(mem['nb_of_parts_o0'][i0+1])
+            f9.write_record(mem['nb_of_parts_o0_1'][i0+1])
             for idim0 in range(H.ndim):
-                mem['mdump'][mem['nb_of_parts_o0'][i0+1]]=mem['pos_memb'][mem['nb_of_parts_o0'][i0+1],idim0]
-                f9.write_record( mem['mdump'] )
+                mdump[mem['nb_of_parts_o0_1'][i0+1]]=pos_memb[mem['nb_of_parts_o0_1'][i0+1],idim0]
+                f9.write_record( mdump )
             for idim0 in range(H.ndim):
-                mem['mdump'][mem['nb_of_parts_o0'][i0+1]]=mem['vel_memb'][mem['nb_of_parts_o0'][i0+1],idim0]
-                f9.write_record( mem['mdump'] )
-            f9.write_record( mem['mass_memb'] )
-            f9.write_record( mem['members'] )
-            H.deallocate('mass_memb','pos_memb','vel_memb','mdump')
+                mdump[mem['nb_of_parts_o0_1'][i0+1]]=vel_memb[mem['nb_of_parts_o0_1'][i0+1],idim0]
+                f9.write_record( mdump )
+            f9.write_record( mass_memb )
+            f9.write_record( members )
+            del mass_memb; del pos_memb; del vel_memb; del mdump
 
-        H.deallocate('members')
+        del members
         # write each halo properties
-        write_halo(H.liste_halos_o0[i0+1],f44)
+        write_halo_1d0(H.liste_halos_o0[i0+1],f44)
     f44.close()
 
 #***********************************************************************
-def write_halo(h:halo,unitfile:FortranFile):
+def write_halo_1d0(h:halo,unitfile:FortranFile):
     # integer(kind=4) :: unitfile
     # type (halo)     :: h
 

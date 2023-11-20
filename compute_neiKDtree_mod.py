@@ -324,38 +324,38 @@ icolor_select = 0
 #   contains
 
 #=======================================================================
-def compute_adaptahop():
+def compute_adaptahop_131():
 #=======================================================================
-    change_pos()
+    change_pos_1310()
     # action neighbors
-    create_tree_structure()
-    compute_mean_density_and_np()
+    create_tree_structure_1311()
+    compute_mean_density_and_np_1312()
     # action adaptahop
-    find_local_maxima()
-    create_group_tree()
-    change_pos_back()
+    find_local_maxima_1313()
+    create_group_tree_1314()
+    change_pos_back_1315()
     # check that we have halos
-    count_halos()
+    count_halos_1316()
     if(H.nb_of_halos>0):
         # reinit halo and subhalo count
         H.nb_of_halos    = 0
         H.nb_of_subhalos = 0
         # H.node_0 structure tree -> halo structure tree: 3 methods avalable
         if(H.method=="HOP"):
-            select_halos()
+            select_halos_1317()
         elif(H.method=="DPM"):
-            select_with_DP_method()
+            select_with_DP_method_1318()
         elif(H.method=="MSM"):
-            select_with_MS_method()
+            select_with_MS_method_1319()
         elif(H.method=="BHM"):
-            select_with_BH_method()
+            select_with_BH_method_131a()
         else:
             print('> could not recognise selection method:',H.method)
     else:
         H.node_0 = []
 
 #=======================================================================
-def list_parameters():
+def list_parameters_1300():
 #=======================================================================
 
 
@@ -382,7 +382,7 @@ def list_parameters():
 
 
 #=======================================================================
-def init_adaptahop():
+def init_adaptahop_130():
 #=======================================================================
     H.omegaL   = H.omega_lambda_f
     H.omega0   = H.omega_f
@@ -406,22 +406,22 @@ def init_adaptahop():
     
     H.nmembthresh = H.nMembers  
     
-    list_parameters()
+    list_parameters_1300()
 
 #=======================================================================
-def change_pos():
+def change_pos_1310():
 #=======================================================================
     H.npart    = H.nbodies
     H.epsilon  = H.fudgepsilon*H.xlong/H.npart**(1/3)
-    mem['pos']      = mem['pos'] * H.boxsize2
+    mem['pos_10']      = mem['pos_10'] * H.boxsize2
 
 #=======================================================================
-def change_pos_back():
+def change_pos_back_1315():
 #=======================================================================
-    mem['pos'] = mem['pos'] / H.boxsize2
+    mem['pos_10'] = mem['pos_10'] / H.boxsize2
 
 #=======================================================================
-def count_halos():
+def count_halos_1316():
 #=======================================================================
     # integer(kind=4) :: inode
     H.nb_of_halos = 0
@@ -429,7 +429,7 @@ def count_halos():
         if(H.node_0[inode1].level==1): H.nb_of_halos += 1
 
 #=======================================================================
-def select_halos():
+def select_halos_1317():
 #=======================================================================
     #   integer(kind=4) :: inode, ihalo, ipar
     #   integer(kind=4) :: node_to_halo(H.nnodes)
@@ -458,12 +458,12 @@ def select_halos():
     H.node_0 = []
 
 #=======================================================================
-def select_with_DP_method():
+def select_with_DP_method_1318():
 #=======================================================================
     raise NotImplementedError('`select_with_DP_method` not implemented')
 
 #=======================================================================
-def select_with_MS_method(mass_acc = 1.0e-2):
+def select_with_MS_method_1319(mass_acc = 1.0e-2):
 #=======================================================================
     # integer(kind=4) :: ihalo,inode,isub,ip
     # integer(kind=4) :: imother,istruct 
@@ -485,23 +485,22 @@ def select_with_MS_method(mass_acc = 1.0e-2):
             H.node_0[inode1].truemass -= H.node_0[isub1].truemass
             isub1 = H.node_0[isub1].sister
         if(H.node_0[inode1].mass<=0 or H.node_0[inode1].truemass<=0.0):
-            print(' Error in computing H.node_0',inode1,'mass')
+            print(' Error in computing H.node_0',inode1,'mass_10')
             raise ValueError(' mass, truemass:', H.node_0[inode1].mass, H.node_0[inode1].truemass)
     if(H.verbose):
         # check that the new masses are correct
-        H.allocate('npartcheck_0', H.nnodes+1)
-        mem['npartcheck_0'][:] = 0
+        npartcheck_0 = np.zeros(H.nnodes+1, dtype=np.int32); npartcheck_0[:] = 0
         for ip1 in frange(1,H.nbodies):
             if(mem['liste_parts'][ip1-1]<0): raise ValueError('liste_parts is smaller than 0')
-            mem['npartcheck_0'][mem['liste_parts'][ip1-1]] += 1
-        if(sum(mem['npartcheck_0'])!=H.nbodies): raise ValueError('Error in particles count')
+            npartcheck_0[mem['liste_parts'][ip1-1]] += 1
+        if(sum(npartcheck_0)!=H.nbodies): raise ValueError('Error in particles count')
         for inode1 in frange(1,H.nnodes):
-            if(H.node_0[inode1].mass!=mem['npartcheck_0'][inode1]):
+            if(H.node_0[inode1].mass!=npartcheck_0[inode1]):
                 print('Error in H.node_0 particle count, for H.node_0',inode1)
                 print('it first subnode is:',H.node_0[inode1].firstchild)
                 if(H.node_0[inode1].firstchild>0): print('it has:',H.node_0[H.node_0[inode1].firstchild].nsisters,'subnodes' )
                 raise ValueError("")
-        H.deallocate('npartcheck_0')
+        del npartcheck_0
     
     mostmasssub[:]    = -1
     for inode1 in frange(H.nnode1, 1, -1):
@@ -564,8 +563,7 @@ def select_with_MS_method(mass_acc = 1.0e-2):
         print('> number of H.node_0 removed        :', H.nnodes - H.nstruct)
         print("")
         print('> Cleaning liste_parts')
-        H.allocate('npartcheck_0',H.nstruct, dtype=np.int32)
-        mem['npartcheck_0'][:] = 0
+        npartcheck_0 = np.zeros(H.nstruct, dtype=np.int32); npartcheck_0[:] = 0
 
     # Cleaning liste_parts
     for ip0 in range(H.nbodies):
@@ -575,74 +573,74 @@ def select_with_MS_method(mass_acc = 1.0e-2):
                 print(ip0, inode1,  node_to_struct[inode1])
                 raise ValueError('error in node_to_struct')
             mem['liste_parts'][ip0] = node_to_struct[inode1-1]
-            if(H.verbose): mem['npartcheck_0'][node_to_struct[inode1-1]] += 1
+            if(H.verbose): npartcheck_0[node_to_struct[inode1-1]] += 1
     if(H.verbose):
         # Check H.node_0[inode].mass it should now correspond to npartcheck_0 count
         for inode0 in range(H.nnodes):
             if(node_to_struct[inode0]<=0): raise ValueError('node_to_struct is nil')
             imother1 = H.node_0[inode0+1].mother
             if((imother1<=0) or (imother1>0 and (node_to_struct[imother1-1]!=node_to_struct[inode0]))):
-                if(H.node_0[inode0+1].mass!=mem['npartcheck_0'][node_to_struct[inode0]]):
+                if(H.node_0[inode0+1].mass!=npartcheck_0[node_to_struct[inode0]]):
                     print('Wrong nb of part in struct: ', node_to_struct[inode0])
                     print('inode0,H.node_0[inode0+1].mass,istruct,npartcheck_0(istruct)',inode0, \
-                        H.node_0[inode0+1].mass,node_to_struct[inode0],mem['npartcheck_0'][node_to_struct[inode0]])
+                        H.node_0[inode0+1].mass,node_to_struct[inode0],npartcheck_0[node_to_struct[inode0]])
                     raise ValueError("")
-        H.deallocate('npartcheck_0')
+        del npartcheck_0
 
     if(H.verbose): print('> Creating new structure tree')
     # creating new structure tree
-    H.allocate('mother', H.nstruct, dtype=np.int32)
-    H.allocate('first_sister', H.nstruct, dtype=np.int32)
-    H.allocate('first_daughter', H.nstruct, dtype=np.int32)
-    H.allocate('level', H.nstruct, dtype=np.int32)
-    mem['mother'][:]         = -1
-    mem['first_sister'][:]   = -1
-    mem['first_daughter'][:] = -1
-    mem['level'][:]          = 0
+    H.allocate('mother_1319', H.nstruct, dtype=np.int32)
+    H.allocate('first_sister_1319', H.nstruct, dtype=np.int32)
+    H.allocate('first_daughter_1319', H.nstruct, dtype=np.int32)
+    H.allocate('level_1319', H.nstruct, dtype=np.int32)
+    mem['mother_1319'][:]         = -1
+    mem['first_sister_1319'][:]   = -1
+    mem['first_daughter_1319'][:] = -1
+    mem['level_1319'][:]          =  0
     ihalo1          = -1 
 
     for inode0 in range(H.nnodes):
         istruct1 = node_to_struct[inode0]
         if(istruct1<=0): raise ValueError('index nil for istrut')
-        if(mem['mother'][istruct1-1]<0):
+        if(mem['mother_1319'][istruct1-1]<0):
             if(H.node_0[inode0+1].mother<=0):
-                mem['mother'][istruct1-1] = 0
-                if(ihalo1>0): mem['first_sister'][ihalo1-1] = istruct1
+                mem['mother_1319'][istruct1-1] = 0
+                if(ihalo1>0): mem['first_sister_1319'][ihalo1-1] = istruct1
                 ihalo1 = istruct1
-                mem['level'][istruct1-1] = 1
+                mem['level_1319'][istruct1-1] = 1
             else:
                 imother1          = node_to_struct[H.node_0[inode0+1].mother]
-                mem['mother'][istruct1-1]  = imother1
-                mem['level'][istruct1-1]   = mem['level'][imother1-1] + 1
-                if(mem['first_daughter'][imother1]<=0):
-                    mem['first_daughter'][imother1-1] = istruct1
+                mem['mother_1319'][istruct1-1]  = imother1
+                mem['level_1319'][istruct1-1]   = mem['level_1319'][imother1-1] + 1
+                if(mem['first_daughter_1319'][imother1]<=0):
+                    mem['first_daughter_1319'][imother1-1] = istruct1
                 else:
-                    isub1 = mem['first_daughter'][imother1-1]
-                    while(mem['first_sister'][isub1-1]>0):
-                        isub1 = mem['first_sister'][isub1-1]
-                    mem['first_sister'][isub1-1] = istruct1
+                    isub1 = mem['first_daughter_1319'][imother1-1]
+                    while(mem['first_sister_1319'][isub1-1]>0):
+                        isub1 = mem['first_sister_1319'][isub1-1]
+                    mem['first_sister_1319'][isub1-1] = istruct1
 
     if(H.megaverbose):
         # For test we shall output the structure tree in file struct_tree.dat'
         f120 = open("struct_tree.dat", mode='w+')
         for istruct0 in range(H.nstruct):
-            if(mem['mother'][istruct0]<=0):
+            if(mem['mother_1319'][istruct0]<=0):
                 f120.write('---------\n')
-                f120.write(f"halo:{istruct0:6d} first_child:{mem['first_daughter'][istruct0]:6d} sister:{mem['first_sister'][istruct0]:6d}\n")
-                isub1 = mem['first_daughter'][istruct0]
+                f120.write(f"halo:{istruct0:6d} first_child:{mem['first_daughter_1319'][istruct0]:6d} sister:{mem['first_sister_1319'][istruct0]:6d}\n")
+                isub1 = mem['first_daughter_1319'][istruct0]
                 while(isub1>0):
-                    f120.write(f"sub:{isub1:6d} mother:{mem['mother'][isub1-1]:6d} first_child:{mem['first_daughter'][isub1-1]:6d} sister:{mem['first_sister'][isub1-1]:6d}\n")
-                    isub1 = mem['first_sister'][isub1-1]
+                    f120.write(f"sub:{isub1:6d} mother:{mem['mother_1319'][isub1-1]:6d} first_child:{mem['first_daughter_1319'][isub1-1]:6d} sister:{mem['first_sister_1319'][isub1-1]:6d}\n")
+                    isub1 = mem['first_sister_1319'][isub1-1]
             else:
-                isub1 = mem['first_daughter'][istruct0]
+                isub1 = mem['first_daughter_1319'][istruct0]
                 if(isub1!=0):
-                    f120.write(f"sub:{istruct0:6d} mother:{mem['mother'][istruct0]:6d} first_child:{mem['first_daughter'][istruct0]:6d} sister:{mem['first_sister'][istruct0]:6d}\n")
+                    f120.write(f"sub:{istruct0:6d} mother:{mem['mother_1319'][istruct0]:6d} first_child:{mem['first_daughter_1319'][istruct0]:6d} sister:{mem['first_sister_1319'][istruct0]:6d}\n")
                     while(isub1>0):
                         # write(120,'(a5,1x,i6,2x,a7,1x,i6,2x,a12,1x,i6,2x,a7,1x,i6)')   &
                         #     ' sub:',isub1, 'mother:', mother(isub1), 'first_child:',   &
-                        #     first_daughter(isub1), 'sister:', mem['first_sister'][isub1-1]
-                        f120.write(f"sub:{isub1:6d} mother:{mem['mother'][isub1-1]:6d} first_child:{mem['first_daughter'][isub1-1]:6d} sister:{mem['first_sister'][isub1-1]:6d}\n")
-                        isub1 = mem['first_sister'][isub1-1]
+                        #     first_daughter(isub1), 'sister:', mem['first_sister_1319'][isub1-1]
+                        f120.write(f"sub:{isub1:6d} mother:{mem['mother_1319'][isub1-1]:6d} first_child:{mem['first_daughter_1319'][isub1-1]:6d} sister:{mem['first_sister_1319'][isub1-1]:6d}\n")
+                        isub1 = mem['first_sister_1319'][isub1-1]
         f120.close()
 
     H.nb_of_halos    = nb_halos
@@ -650,7 +648,7 @@ def select_with_MS_method(mass_acc = 1.0e-2):
     H.node_0 = []
 
 #=======================================================================
-def select_with_BH_method():
+def select_with_BH_method_131a():
 #=======================================================================
     raise NotImplementedError('`select_with_BH_method` not implemented')
 
@@ -670,7 +668,7 @@ def make_linked_node_list():
     raise NotImplementedError("`make_linked_node_list` is used in BHM which is not implemented")
 
 #=======================================================================
-def compute_mean_density_and_np():
+def compute_mean_density_and_np_1312():
 #=======================================================================
     # integer(kind=4)                     :: ipar
     # real(kind=8), dimension(0:H.nvoisins) :: dist2_0
@@ -680,8 +678,8 @@ def compute_mean_density_and_np():
 
     if (H.verbose): print('Compute mean density for each particle...')
 
-    H.allocate('iparneigh',(H.nhop,H.npart), dtype=np.int32)
-    H.allocate('density',H.npart, dtype=np.float64)
+    H.allocate('iparneigh_1312',(H.nhop,H.npart), dtype=np.int32)
+    H.allocate('density_1312',H.npart, dtype=np.float64)
 
     if (H.verbose): print('First find nearest particles')
 
@@ -689,26 +687,26 @@ def compute_mean_density_and_np():
     # !$OMP DEFAULT(SHARED) &
     # !$OMP PRIVATE(ipar,dist2_0,iparnei)
     for ipar1 in frange(1,H.npart):
-        find_nearest_parts(ipar1,dist2_0,mem['iparnei'])
-        compute_density(ipar1,dist2_0,mem['iparnei'])
-        mem['iparneigh'][:H.nhop,ipar1-1]=mem['iparnei'][:H.nhop]
+        find_nearest_parts_13120(ipar1,dist2_0,mem['iparnei'])
+        compute_density_13121(ipar1,dist2_0,mem['iparnei'])
+        mem['iparneigh_1312'][:H.nhop,ipar1-1]=mem['iparnei'][:H.nhop]
     # !$OMP END PARALLEL DO
 
     # Check for average density
     if (H.verbose):
         densav=0
         for ipar1 in frange(1,H.npart):
-            densav=(densav*(ipar1-1)+mem['density'][ipar1-1])/ipar1
+            densav=(densav*(ipar1-1)+mem['density_1312'][ipar1-1])/ipar1
         print('Average density :',densav)
     
-    H.deallocate('mass_cell')
-    H.deallocate('size_cell')
-    H.deallocate('pos_cell')
-    H.deallocate('sister')
-    H.deallocate('firstchild')
+    H.deallocate('mass_cell_1311')
+    H.deallocate('size_cell_1311')
+    H.deallocate('pos_cell_1311')
+    H.deallocate('sister_1311')
+    H.deallocate('firstchild_1311')
 
 #=======================================================================
-def find_local_maxima():
+def find_local_maxima_1313():
 #=======================================================================
 #   integer(kind=4)             :: ipar,idist,iparid,iparsel,igroup,nmembmax,nmembtot
 #   integer(kind=4),allocatable :: nmemb(:)
@@ -716,69 +714,69 @@ def find_local_maxima():
 
     if (H.verbose): print('Now Find local maxima...')
 
-    H.allocate('igrouppart', H.npart)
+    H.allocate('igrouppart_1313', H.npart)
 
-    mem['idpart'][:]=0
+    mem['idpart_1311'][:]=0
     H.ngroups=0
     for ipar1 in frange(1,H.npart):
-        denstest=mem['density'][ipar1-1]
+        denstest=mem['density_1312'][ipar1-1]
         if (denstest>H.rho_threshold):
             iparsel1=ipar1
         for idist0 in range(H.nhop):
-            iparid1=mem['iparneigh'][idist0,ipar1-1]
-            if (mem['density'][iparid1-1]>denstest):
+            iparid1=mem['iparneigh_1312'][idist0,ipar1-1]
+            if (mem['density_1312'][iparid1-1]>denstest):
                 iparsel1=iparid1
-                denstest=mem['density'][iparid1-1]
-            elif (mem['density'][iparid1-1]==denstest):
+                denstest=mem['density_1312'][iparid1-1]
+            elif (mem['density_1312'][iparid1-1]==denstest):
                 iparsel1=min(iparsel1,iparid1)
                 if (H.verbose): print('WARNING : equal densities in find_local_maxima.')
         if (iparsel1==ipar1):
             H.ngroups += 1
-            mem['idpart'][ipar1-1]=-H.ngroups
+            mem['idpart_1311'][ipar1-1]=-H.ngroups
         else:
-            mem['idpart'][ipar1-1]=iparsel1
+            mem['idpart_1311'][ipar1-1]=iparsel1
     
     if (H.verbose): print('Number of local maxima found :',H.ngroups)
 
     # Now Link the particles associated to the same maximum
     if (H.verbose): print('Create link list...')
 
-    H.allocate('densityg',H.ngroups, dtype=np.float64)
-    H.allocate('nmemb',H.ngroups, dtype=np.int32)
-    H.allocate('firstpart',H.ngroups, dtype=np.int32)
+    H.allocate('densityg_1313',H.ngroups, dtype=np.float64)
+    nmemb = np.zeros(H.ngroups, dtype=np.int32)
+    H.allocate('firstpart_1313',H.ngroups, dtype=np.int32)
 
     for ipar0 in range(H.npart):
-        if (mem['density'][ipar0]>H.rho_threshold):
-            iparid1=mem['idpart'][ipar0]
-            if (iparid1<0): mem['densityg'][-iparid1-1]=mem['density'][ipar0]
+        if (mem['density_1312'][ipar0]>H.rho_threshold):
+            iparid1=mem['idpart_1311'][ipar0]
+            if (iparid1<0): mem['densityg_1313'][-iparid1-1]=mem['density_1312'][ipar0]
             while (iparid1>0):
-                iparid1=mem['idpart'][iparid1-1]
-            mem['igrouppart'][ipar0]=-iparid1
+                iparid1=mem['idpart_1311'][iparid1-1]
+            mem['igrouppart_1313'][ipar0]=-iparid1
         else:
-            mem['igrouppart'][ipar0]=0
+            mem['igrouppart_1313'][ipar0]=0
 
-    mem['nmemb'][:H.ngroups]=0
-    mem['firstpart'][:H.ngroups]=0
+    nmemb[:H.ngroups]=0
+    mem['firstpart_1313'][:H.ngroups]=0
     for ipar0 in range(H.npart):
-        igroup1=mem['igrouppart'][ipar0]
+        igroup1=mem['igrouppart_1313'][ipar0]
         if (igroup1>0):
-            mem['idpart'][ipar0]=mem['firstpart'][igroup1-1]
-            mem['firstpart'][igroup1-1]=ipar0+1
-            mem['nmemb'][igroup1-1] += 1
+            mem['idpart_1311'][ipar0]=mem['firstpart_1313'][igroup1-1]
+            mem['firstpart_1313'][igroup1-1]=ipar0+1
+            nmemb[igroup1-1] += 1
 
     nmembmax=0
     nmembtot=0
     for igroup0 in range(H.ngroups):
-        nmembmax=max(nmembmax,mem['nmemb'][igroup0])
-        nmembtot += mem['nmemb'][igroup0]
+        nmembmax=max(nmembmax,nmemb[igroup0])
+        nmembtot += nmemb[igroup0]
 
     if (H.verbose):
         print('Number of particles of the largest group :',nmembmax)
         print('Total number of particles in groups ',nmembtot)
-    H.deallocate('nmemb')
+    del nmemb
 
 #=======================================================================
-def create_group_tree():
+def create_group_tree_1314():
 #=======================================================================
     #   integer(kind=4) :: inode,mass_loc,masstmp,igroup,igrA,igrB,igroupref
     #   real(kind=8)    :: rhot,posg[2],posref(3),rsquare,densmoy,truemass,truemasstmp
@@ -788,17 +786,17 @@ def create_group_tree():
     if (H.verbose): print('Create the tree of structures of structures')
 
     # End of the branches of the tree
-    compute_saddle_list()
+    compute_saddle_list_13140()
 
     if (H.verbose): print('Build the hierarchical tree')
 
     H.nnodesmax=2*H.ngroups
     # Allocations
     H.node_0 = [H.supernode() for _ in range(H.nnodesmax)]
-    H.allocate('idgroup',H.ngroups, dtype=np.int32)
-    H.allocate('color',H.ngroups, dtype=np.int32)
-    H.allocate('igroupid',H.ngroups, dtype=np.int32)
-    H.allocate('idgroup_tmp',H.ngroups, dtype=np.int32)
+    H.allocate('idgroup_1314',H.ngroups, dtype=np.int32)
+    H.allocate('color_1314',H.ngroups, dtype=np.int32)
+    H.allocate('igroupid_1314',H.ngroups, dtype=np.int32)
+    H.allocate('idgroup_tmp_1314',H.ngroups, dtype=np.int32)
 
     # Initializations
     mem['liste_parts'][:] = 0
@@ -816,7 +814,7 @@ def create_group_tree():
     densmoy             = 0
     truemasstmp         = 0
     for igroup1 in frange(1,H.ngroups):
-        treat_particles(igroup1,rhot,posg,masstmp,igroupref,posref, rsquare,densmoy,truemasstmp)
+        treat_particles_13141(igroup1,rhot,posg,masstmp,igroupref,posref, rsquare,densmoy,truemasstmp)
         mass_loc += masstmp
         truemass += truemasstmp
 
@@ -825,7 +823,7 @@ def create_group_tree():
     H.node_0[inode1].radius        = 0
     H.node_0[inode1].density       = 0
     H.node_0[inode1].position[:3] = 0
-    H.node_0[inode1].densmax       = np.max(mem['densityg'])
+    H.node_0[inode1].densmax       = np.max(mem['densityg_1313'])
     H.node_0[inode1].rho_saddle    = 0.
     H.node_0[inode1].level         = 0
     H.node_0[inode1].nsisters      = 0
@@ -833,21 +831,21 @@ def create_group_tree():
     igrA = 1
     igrB = H.ngroups
     for igroup0 in range(H.ngroups):
-        mem['idgroup'][igroup0]=igroup0+1
-        mem['igroupid'][igroup0]=igroup0+1
-    create_nodes(rhot,inode1,igrA,igrB)
+        mem['idgroup_1314'][igroup0]=igroup0+1
+        mem['igroupid_1314'][igroup0]=igroup0+1
+    create_nodes_13143(rhot,inode1,igrA,igrB)
 
-    H.deallocate('idgroup')
-    H.deallocate('color')
-    H.deallocate('igroupid')
-    H.deallocate('idgroup_tmp')
-    H.deallocate('idpart')
+    H.deallocate('idgroup_1314')
+    H.deallocate('color_1314')
+    H.deallocate('igroupid_1314')
+    H.deallocate('idgroup_tmp_1314')
+    H.deallocate('idpart_1311')
     H.deallocate('group')
-    H.deallocate('densityg')
-    H.deallocate('firstpart')
+    H.deallocate('densityg_1313')
+    H.deallocate('firstpart_1313')
  
 #=======================================================================
-def create_nodes(rhot,inode1,igrA,igrB):
+def create_nodes_13143(rhot,inode1,igrA,igrB):
 #=======================================================================
     global ncall, icolor_select
     # integer(kind=4)              :: inode1,igrA,igrB
@@ -877,71 +875,70 @@ def create_nodes(rhot,inode1,igrA,igrB):
     # real(kind=8),  allocatable   :: densmoy(:)
     # logical, allocatable         :: ifok(:)  
 
-    mem['color'][igrA-1:igrB] = 0
+    mem['color_1314'][igrA-1:igrB] = 0
     # Percolate the groups
     icolor_select=0
     for igr1 in frange(igrA, igrB):
-        igroup1=mem['idgroup'][igr1-1]
-        if (mem['color'][igr1-1]==0):
+        igroup1=mem['idgroup_1314'][igr1-1]
+        if (mem['color_1314'][igr1-1]==0):
             icolor_select += 1
             ncall=0                                               #YDdebug
-            do_colorize(igroup1,igr1,rhot) #YDdebug
+            do_colorize_131430(igroup1,igr1,rhot) #YDdebug
             #write(errunit,'(A,3I8,e10.2,I8)')'End of do_colorize',icolor_select,igroup,igr,rhot,ncall
 
     # We select only groups where we are sure of having at least one
     # particle above the threshold density rhot
     # Then sort them to gather them on the list
-    H.allocate('igrpos_0',icolor_select+1, dtype=np.int32)
-    H.allocate('igrinc',icolor_select, dtype=np.int32)
-    mem['igrpos_0'][0]=igrA-1
-    mem['igrpos_0'][1:icolor_select+1]=0
+    igrpos_0 = np.zeros(icolor_select+1, dtype=np.int32)
+    igrinc = np.zeros(icolor_select, dtype=np.int32)
+    igrpos_0[0]=igrA-1
+    igrpos_0[1:icolor_select+1]=0
     for igr1 in frange(igrA, igrB):
-        icolor=mem['color'][igr1-1]
-        igroup=mem['idgroup'][igr1-1]
-        if(mem['densityg'][igroup]>rhot): mem['igrpos_0'][icolor] += 1
+        icolor=mem['color_1314'][igr1-1]
+        igroup=mem['idgroup_1314'][igr1-1]
+        if(mem['densityg_1313'][igroup]>rhot): igrpos_0[icolor] += 1
     for icolor1 in frange(1,icolor_select):
-        mem['igrpos_0'][icolor1] += mem['igrpos_0'][icolor1-1]
-    if (mem['igrpos_0'][icolor_select]-igrA+1 == 0):
+        igrpos_0[icolor1] += igrpos_0[icolor1-1]
+    if (igrpos_0[icolor_select]-igrA+1 == 0):
         print('ERROR in create_nodes :')
-        print('All subgroups are below the threshold.')
-    #     STOP
+        raise ValueError('All subgroups are below the threshold.')
 
-    mem['igrinc'][:icolor_select]=0
+    igrinc[:icolor_select]=0
     for igr1 in frange(igrA, igrB):
-        icolor1=mem['color'][igr1-1]
-        igroup1=mem['idgroup'][igr1-1]
-        if (mem['densityg'][igroup1-1]>rhot):
-            mem['igrinc'][icolor1-1] += 1
-            igr_eff1=mem['igrinc'][icolor1-1]+mem['igrpos_0'][icolor1-1]
-            mem['idgroup_tmp'][igr_eff1-1]=igroup1
-            mem['igroupid'][igroup1-1]=igr_eff1
-    igrB=mem['igrpos_0'][icolor_select]
-    mem['idgroup'][igrA-1:igrB]=mem['idgroup_tmp'][igrA-1:igrB]
+        icolor1=mem['color_1314'][igr1-1]
+        igroup1=mem['idgroup_1314'][igr1-1]
+        if (mem['densityg_1313'][igroup1-1]>rhot):
+            igrinc[icolor1-1] += 1
+            igr_eff1=igrinc[icolor1-1]+igrpos_0[icolor1-1]
+            mem['idgroup_tmp_1314'][igr_eff1-1]=igroup1
+            mem['igroupid_1314'][igroup1-1]=igr_eff1
+    igrB=igrpos_0[icolor_select]
+    mem['idgroup_1314'][igrA-1:igrB]=mem['idgroup_tmp_1314'][igrA-1:igrB]
 
-    inc_color_tot = np.sum(mem['igrinc'][:icolor_select]>0)
+    inc_color_tot = np.sum(igrinc[:icolor_select]>0)
 
-    H.allocate('igrposnew_0',1+inc_color_tot, dtype=np.int32)
-    mem['igrposnew_0'][0] = mem['igrpos_0'][0]
+    H.allocate('igrposnew_0_13143',1+inc_color_tot, dtype=np.int32)
+    mem['igrposnew_0_13143'][0] = igrpos_0[0]
     inc_color_tot=0
     for icolor1 in frange(1,icolor_select):
-        if (mem['igrinc'][icolor1-1]>0):
+        if (igrinc[icolor1-1]>0):
             inc_color_tot += 1
-            mem['igrposnew_0'][inc_color_tot]=mem['igrpos_0'][icolor1]
+            mem['igrposnew_0_13143'][inc_color_tot]=igrpos_0[icolor1]
 
-    H.deallocate('igrpos_0')
-    H.deallocate('igrinc')
+    del igrpos_0
+    del igrinc
 
     isisters=0
-    H.allocate('posgg', (3,inc_color_tot), dtype=np.float64)
-    H.allocate('massg', inc_color_tot, dtype=np.int32)
-    H.allocate('truemassg', inc_color_tot, dtype=np.float64)
-    H.allocate('densmaxg', inc_color_tot, dtype=np.float64)
-    H.allocate('densmoy_comp_maxg', inc_color_tot, dtype=np.float64)
-    H.allocate('mass_compg', inc_color_tot, dtype=np.int32)
-    H.allocate('rsquare', inc_color_tot, dtype=np.float64)
-    H.allocate('densmoy', inc_color_tot, dtype=np.float64)
-    H.allocate('ifok', inc_color_tot, dtype=np.bool_)
-    mem['ifok'][:inc_color_tot]=False
+    H.allocate('posgg_13143', (3,inc_color_tot), dtype=np.float64)
+    H.allocate('massg_13143', inc_color_tot, dtype=np.int32)
+    H.allocate('truemassg_13143', inc_color_tot, dtype=np.float64)
+    H.allocate('densmaxg_13143', inc_color_tot, dtype=np.float64)
+    H.allocate('densmoy_comp_maxg_13143', inc_color_tot, dtype=np.float64)
+    H.allocate('mass_compg_13143', inc_color_tot, dtype=np.int32)
+    H.allocate('rsquare_13143', inc_color_tot, dtype=np.float64)
+    H.allocate('densmoy_13143', inc_color_tot, dtype=np.float64)
+    H.allocate('ifok_13143', inc_color_tot, dtype=np.bool_)
+    mem['ifok_13143'][:inc_color_tot]=False
 
     for icolor0 in range(inc_color_tot):
         posg[:3]=0
@@ -949,8 +946,8 @@ def create_nodes(rhot,inode1,igrA,igrB):
         truemass=0
         rsquareg=0
         densmoyg=0
-        igrA=mem['igrposnew_0'][icolor0]+1
-        igrB=mem['igrposnew_0'][icolor0+1]
+        igrA=mem['igrposnew_0_13143'][icolor0]+1
+        igrB=mem['igrposnew_0_13143'][icolor0+1]
         densmaxgroup=-1.
         mass_comp=0
         densmoy_comp_max=-1.
@@ -959,9 +956,9 @@ def create_nodes(rhot,inode1,igrA,igrB):
         rsquaretmp = 0
         truemasstmp = 0
         for igr1 in frange(igrA, igrB):
-            igroup1=mem['idgroup'][igr1-1]
-            densmaxgroup=max(densmaxgroup,mem['densityg'][igroup1-1])
-            igroupref = treat_particles(
+            igroup1=mem['idgroup_1314'][igr1-1]
+            densmaxgroup=max(densmaxgroup,mem['densityg_1313'][igroup1-1])
+            igroupref = treat_particles_13141(
                 igroup1,rhot,igroupref,
                 posref,masstmp,
                 truemasstmp,rsquaretmp,densmoytmp,posgtmp)
@@ -976,21 +973,21 @@ def create_nodes(rhot,inode1,igrA,igrB):
             mass_comp=max(mass_comp,masstmp)
             if (masstmp > 0): densmoy_comp_max=max(densmoy_comp_max, densmoytmp/(1+H.fudge/np.sqrt(masstmp)))
 
-        mem['massg'][icolor0]=mass_loc
-        mem['truemassg'][icolor0]=truemass
-        mem['posgg'][:3,icolor0]=posg[:3]
-        mem['densmaxg'][icolor0]=densmaxgroup
-        mem['densmoy_comp_maxg'][icolor0]=densmoy_comp_max
-        mem['mass_compg'][icolor0]=mass_comp
-        mem['rsquare'][icolor0]=np.sqrt(abs((truemass*rsquareg-(posg[0]**2+posg[1]**2+posg[2]**2) )/ truemass**2 ))
-        mem['densmoy'][icolor0]=densmoyg/mass_loc
+        mem['massg_13143'][icolor0]=mass_loc
+        mem['truemassg_13143'][icolor0]=truemass
+        mem['posgg_13143'][:3,icolor0]=posg[:3]
+        mem['densmaxg_13143'][icolor0]=densmaxgroup
+        mem['densmoy_comp_maxg_13143'][icolor0]=densmoy_comp_max
+        mem['mass_compg_13143'][icolor0]=mass_comp
+        mem['rsquare_13143'][icolor0]=np.sqrt(abs((truemass*rsquareg-(posg[0]**2+posg[1]**2+posg[2]**2) )/ truemass**2 ))
+        mem['densmoy_13143'][icolor0]=densmoyg/mass_loc
 
-        mem['ifok'][icolor0]=(mass_loc>=H.nmembthresh) and \
-            (mem['densmoy'][icolor0] > rhot*(1+H.fudge/np.sqrt(mass_loc)) or  mem['densmoy_comp_maxg'][icolor0]>rhot) and \
-            (mem['densmaxg'][icolor0] >= H.alphap*mem['densmoy'][icolor0]) and \
-            (mem['rsquare'][icolor0] >= H.epsilon)
+        mem['ifok_13143'][icolor0]=(mass_loc>=H.nmembthresh) and \
+            (mem['densmoy_13143'][icolor0] > rhot*(1+H.fudge/np.sqrt(mass_loc)) or  mem['densmoy_comp_maxg_13143'][icolor0]>rhot) and \
+            (mem['densmaxg_13143'][icolor0] >= H.alphap*mem['densmoy_13143'][icolor0]) and \
+            (mem['rsquare_13143'][icolor0] >= H.epsilon)
 
-        if (mem['ifok'][icolor0]):
+        if (mem['ifok_13143'][icolor0]):
             isisters += 1
             icolor_ref=icolor0
 
@@ -999,7 +996,7 @@ def create_nodes(rhot,inode1,igrA,igrB):
         isisters=0
         inodetmp=H.nnodes+1
         for icolor0 in range(inc_color_tot):
-            if (mem['ifok'][icolor0]):
+            if (mem['ifok_13143'][icolor0]):
                 isisters += 1
                 H.nnodes=H.nnodes+1
                 if (H.nnodes>H.nnodesmax):
@@ -1007,19 +1004,19 @@ def create_nodes(rhot,inode1,igrA,igrB):
                     raise ValueError(f'H.nnodes({H.nnodes}) > H.nnodes max({H.nnodesmax})')
                 if((H.nnodes%max(H.nnodesmax/10000,1))==0 and H.megaverbose): print('H.nnodes=',H.nnodes)
                 H.node_0[H.nnodes].mother=inode1
-                H.node_0[H.nnodes].densmax=mem['densmaxg'][icolor0]
+                H.node_0[H.nnodes].densmax=mem['densmaxg_13143'][icolor0]
                 if (isisters>1): H.node_0[H.nnodes].sister=H.nnodes-1
                 else: H.node_0[H.nnodes].sister=0
 
                 H.node_0[H.nnodes].nsisters=nsisters
-                H.node_0[H.nnodes].mass=mem['massg'][icolor0]
-                H.node_0[H.nnodes].truemass=mem['truemassg'][icolor0]
+                H.node_0[H.nnodes].mass=mem['massg_13143'][icolor0]
+                H.node_0[H.nnodes].truemass=mem['truemassg_13143'][icolor0]
                 if (mass_loc==0):
                     print('ERROR in create_nodes :')
                     raise ValueError('NULL mass for H.nnodes=',H.nnodes)
-                posfin[:3] = mem['posgg'][:3,icolor0]/mem['truemassg'][icolor0]
-                H.node_0[H.nnodes].radius=mem['rsquare'][icolor0]
-                H.node_0[H.nnodes].density=mem['densmoy'][icolor0]
+                posfin[:3] = mem['posgg_13143'][:3,icolor0]/mem['truemassg_13143'][icolor0]
+                H.node_0[H.nnodes].radius=mem['rsquare_13143'][icolor0]
+                H.node_0[H.nnodes].density=mem['densmoy_13143'][icolor0]
                 posfin[0]=posfin[0]-H.xlong if(posfin[0]>=H.xlongs2) else posfin[0]+H.xlong
                 posfin[1]=posfin[1]-H.ylong if(posfin[1]>=H.ylongs2) else posfin[1]+H.ylong
                 posfin[2]=posfin[2]-H.zlong if(posfin[2]>=H.zlongs2) else posfin[2]+H.zlong
@@ -1042,53 +1039,53 @@ def create_nodes(rhot,inode1,igrA,igrB):
         H.node_0[inode1].firstchild=H.nnodes
         inodeout1=inodetmp
         for icolor0 in range(inc_color_tot):
-            if (mem['ifok'][icolor0]):
-                igrAout=mem['igrposnew_0'][icolor0]+1
-                igrBout=mem['igrposnew_0'][icolor0+1]
+            if (mem['ifok_13143'][icolor0]):
+                igrAout=mem['igrposnew_0_13143'][icolor0]+1
+                igrBout=mem['igrposnew_0_13143'][icolor0+1]
                 for igr1 in frange(igrAout, igrBout):
-                    paint_particles(mem['idgroup'][igr1-1],inodeout1,rhot)
-                rhotout=rhot*(1+H.fudge/np.sqrt(mem['mass_compg'][icolor0]))
+                    paint_particles_131431(mem['idgroup_1314'][igr1-1],inodeout1,rhot)
+                rhotout=rhot*(1+H.fudge/np.sqrt(mem['mass_compg_13143'][icolor0]))
                 if (igrBout!=igrAout):
-                    create_nodes(rhotout,inodeout1,igrAout,igrBout)
+                    create_nodes_13143(rhotout,inodeout1,igrAout,igrBout)
                 else:
                     H.node_0[inodeout1].firstchild=0
                 inodeout1 += 1
     elif (nsisters==1):
         inodeout1=inode1
-        rhotout=rhot*(1+H.fudge/np.sqrt(mem['mass_compg'][icolor_ref]))
-        igrAout=mem['igrposnew_0'][0]+1
-        igrBout=mem['igrposnew_0'][inc_color_tot]
-        if (igrBout!=igrAout): create_nodes(rhotout,inodeout1,igrAout,igrBout)
+        rhotout=rhot*(1+H.fudge/np.sqrt(mem['mass_compg_13143'][icolor_ref]))
+        igrAout=mem['igrposnew_0_13143'][0]+1
+        igrBout=mem['igrposnew_0_13143'][inc_color_tot]
+        if (igrBout!=igrAout): create_nodes_13143(rhotout,inodeout1,igrAout,igrBout)
         else: H.node_0[inode1].firstchild=0
     else:
         H.node_0[inode1].firstchild=0
 
-    H.deallocate('igrposnew_0')
-    H.deallocate('posgg')
-    H.deallocate('massg')
-    H.deallocate('truemassg')
-    H.deallocate('densmaxg')
-    H.deallocate('densmoy_comp_maxg')
-    H.deallocate('densmoy')
-    H.deallocate('mass_compg')
-    H.deallocate('rsquare')
-    H.deallocate('ifok')
+    H.deallocate('igrposnew_0_13143')
+    H.deallocate('posgg_13143')
+    H.deallocate('massg_13143')
+    H.deallocate('truemassg_13143')
+    H.deallocate('densmaxg_13143')
+    H.deallocate('densmoy_comp_maxg_13143')
+    H.deallocate('densmoy_13143')
+    H.deallocate('mass_compg_13143')
+    H.deallocate('rsquare_13143')
+    H.deallocate('ifok_13143')
 
 #=======================================================================
-def paint_particles(igroup1,inode1,rhot):
+def paint_particles_131431(igroup1,inode1,rhot):
 #=======================================================================
     # integer(kind=4) :: igroup1,inode1
     # real(kind=8)    :: rhot
     # integer(kind=4) :: ipar
 
-    ipar1=mem['firstpart'][igroup1-1]
+    ipar1=mem['firstpart_1313'][igroup1-1]
     while(ipar1>0):
-        if(mem['density'][ipar1-1]>rhot):
+        if(mem['density_1312'][ipar1-1]>rhot):
             mem['liste_parts'][ipar1-1]=inode1
-        ipar1=mem['idpart'][ipar1-1]
+        ipar1=mem['idpart_1311'][ipar1-1]
 
 #=======================================================================
-def treat_particles(igroup1,rhot,igroupref,posref,imass,truemass,rsquare,densmoy,posg):
+def treat_particles_13141(igroup1,rhot,igroupref,posref,imass,truemass,rsquare,densmoy,posg):
 #=======================================================================
     # real(kind=8)    :: rhot
     # real(kind=8)    :: posg[2],posref(3)
@@ -1102,28 +1099,28 @@ def treat_particles(igroup1,rhot,igroupref,posref,imass,truemass,rsquare,densmoy
     rsquare=0
     densmoy=0
     posg = np.zeros(3, dtype=np.float64)
-    ipar1=mem['firstpart'][igroup1-1]
+    ipar1=mem['firstpart_1313'][igroup1-1]
     first_good=False
     while (ipar1>0):
-        if (mem['density'][ipar1-1] > rhot):
+        if (mem['density_1312'][ipar1-1] > rhot):
             if ( not first_good):
                 if (igroupref==0):
-                    posref[:3]=mem['pos'][ipar1-1,:3]
+                    posref[:3]=mem['pos_10'][ipar1-1,:3]
                     igroupref=igroup1
                 first_good=True
-                mem['firstpart'][igroup1-1]=ipar1
-                densmin=mem['density'][ipar1-1]
+                mem['firstpart_1313'][igroup1-1]=ipar1
+                densmin=mem['density_1312'][ipar1-1]
                 densmax=densmin
             else:
-                mem['idpart'][iparold]=ipar1
+                mem['idpart_1311'][iparold]=ipar1
 
             iparold=ipar1
             imass += 1
-            xmasspart = mem['mass'][ipar1-1] if(H.allocated('mass')) else H.massp
+            xmasspart = mem['mass_10'][ipar1-1] if(H.allocated('mass_10')) else H.massp
             truemass += xmasspart
-            posdiffx=mem['pos'][ipar1-1,0]-posref[0]
-            posdiffy=mem['pos'][ipar1-1,1]-posref[1]
-            posdiffz=mem['pos'][ipar1-1,2]-posref[2]
+            posdiffx=mem['pos_10'][ipar1-1,0]-posref[0]
+            posdiffy=mem['pos_10'][ipar1-1,1]-posref[1]
+            posdiffz=mem['pos_10'][ipar1-1,2]-posref[2]
 
             posdiffx=posdiffx-H.xlong if(posdiffx>=H.xlongs2) else posdiffx+H.xlong
             posdiffy=posdiffy-H.ylong if(posdiffy>=H.ylongs2) else posdiffy+H.ylong
@@ -1135,21 +1132,21 @@ def treat_particles(igroup1,rhot,igroupref,posref,imass,truemass,rsquare,densmoy
             posg[1] += posdiffy*xmasspart
             posg[2] += posdiffz*xmasspart
             rsquare += xmasspart*(posdiffx**2+posdiffy**2+posdiffz**2)
-            densmoy += mem['density'][ipar1-1]
-            densmax = max(densmax,mem['density'][ipar1-1])
-            densmin = min(densmin,mem['density'][ipar1-1])
-        ipar1=mem['idpart'][ipar1-1]
-    if ( not first_good): mem['firstpart'][igroup1-1]=0
+            densmoy += mem['density_1312'][ipar1-1]
+            densmax = max(densmax,mem['density_1312'][ipar1-1])
+            densmin = min(densmin,mem['density_1312'][ipar1-1])
+        ipar1=mem['idpart_1311'][ipar1-1]
+    if ( not first_good): mem['firstpart_1313'][igroup1-1]=0
 
-    if ( (densmin<=rhot)or(densmax!=mem['densityg'][igroup1-1]) ):
+    if ( (densmin<=rhot)or(densmax!=mem['densityg_1313'][igroup1-1]) ):
         print('ERROR in treat_particles')
-        print('igroup1, densmax, rhot=',igroup1,mem['densityg'][igroup1-1],rhot)
+        print('igroup1, densmax, rhot=',igroup1,mem['densityg_1313'][igroup1-1],rhot)
         raise ValueError('denslow, denshigh    =',densmin,densmax)
     return igroupref
 
 #=======================================================================
 # !!$recursive subroutine do_colorize(icolor_select,igroup,igr,rhot)
-def do_colorize(igroup1,igr1,rhot): #YDdebug
+def do_colorize_131430(igroup1,igr1,rhot): #YDdebug
 #=======================================================================
     # integer(kind=4) :: igroup1,igr1
     # integer(kind=4) :: ineig,igroup2,igrB,neig
@@ -1158,18 +1155,18 @@ def do_colorize(igroup1,igr1,rhot): #YDdebug
 
     ncall += 1
     # !!$  write(errunit,'(A,3I8,e10.2,I8)')'do_colorize',icolor_select,igroup1,igr1,rhot,ncall
-    mem['color'][igr1-1]=icolor_select
+    mem['color_1314'][igr1-1]=icolor_select
     neig=H.group[igroup1-1].nhnei
     for ineig0 in range(H.group[igroup1-1].nhnei):
         if (H.group[igroup1-1].rho_saddle_gr[ineig0] > rhot):
     # We connect this group to its neighbourg
             igroup2=H.group[igroup1-1].isad_gr[ineig0]
-            igrB=mem['igroupid'][igroup2-1]
-            if (mem['color'][igrB-1]==0):
+            igrB=mem['igroupid_1314'][igroup2-1]
+            if (mem['color_1314'][igrB-1]==0):
     # !!$           call do_colorize(icolor_select,igroup2,igrB,rhot)
-                do_colorize(igroup2,igrB,rhot) #YDdebug
-            elif (mem['color'][igrB-1]!=icolor_select):
-                print(f"ERROR in do_colorize : color(igrB)({mem['color'][igrB-1]}) <> icolor_select({icolor_select})")
+                do_colorize_131430(igroup2,igrB,rhot) #YDdebug
+            elif (mem['color_1314'][igrB-1]!=icolor_select):
+                print(f"ERROR in do_colorize : color(igrB)({mem['color_1314'][igrB-1]}) <> icolor_select({icolor_select})")
                 raise ValueError('The connections are not symmetric.')
             else:
                 pass
@@ -1180,7 +1177,7 @@ def do_colorize(igroup1,igr1,rhot): #YDdebug
     H.group[igroup1-1].nhnei=neig
 
 #=======================================================================
-def compute_saddle_list():
+def compute_saddle_list_13140():
 #=======================================================================
 # Compute the lowest density threshold below which each group is 
 # connected to an other one
@@ -1203,39 +1200,36 @@ def compute_saddle_list():
 
     if (H.verbose): print('First count the number of neighbourgs of each elementary group...')
 
-    H.allocate('touch', H.ngroups, dtype=np.bool_)
-    H.allocate('listg', H.ngroups, dtype=np.int32)
+    touch = np.zeros(H.ngroups, dtype=np.bool_); touch[:H.ngroups] = False
+    listg = np.zeros(H.ngroups, dtype=np.int32); listg[:H.ngroups] = 0
 
-    mem['touch'][:H.ngroups]=False
 
     # First count the number of neighbourgs for each group to H.allocate
     # arrays isad_in,isad_out,rho_saddle_gr
     for igroupA0 in range(H.ngroups):
         ineig=0
-        ipar1=mem['firstpart'][igroupA0]
+        ipar1=mem['firstpart_1313'][igroupA0]
     # Loop on all the members of the group
         while (ipar1>0):
             for idist0 in range(H.nhop):
-                ipar2=mem['iparneigh'][idist0,ipar1-1]
-                igroupB1=mem['igrouppart'][ipar2-1]
-        # we test that we are in a group (i.e. that mem['density'][ipar] >= rho_hold
+                ipar2=mem['iparneigh_1312'][idist0,ipar1-1]
+                igroupB1=mem['igrouppart_1313'][ipar2-1]
+        # we test that we are in a group (i.e. that mem['density_1312'][ipar] >= rho_hold
         # and that this group is different from the one we are sitting on
                 if( (igroupB1>0)and(igroupB1 != igroupA0+1) ):
-                    if ( not mem['touch'][igroupB1-1]):
+                    if ( not touch[igroupB1-1]):
                         ineig += 1
-                        mem['touch'][igroupB1-1]=True
-                        mem['listg'][ineig-1]=igroupB1
+                        touch[igroupB1-1]=True
+                        listg[ineig-1]=igroupB1
     # Next member
-            ipar1 = mem['idpart'][ipar1-1]
+            ipar1 = mem['idpart_1311'][ipar1-1]
     # Reinitialize touch
         for inA0 in range(ineig):
-            igroupB1=mem['listg'][inA0]
-            mem['touch'][igroupB1-1]=False
+            igroupB1=listg[inA0]
+            touch[igroupB1-1]=False
     # Allocate the nodes 
         H.group[igroupA0].nhnei=ineig
         ineigal=max(ineig,1)
-        # H.allocate(group[igroupA0].isad_gr(1:ineigal))
-        # H.allocate(group[igroupA0].rho_saddle_gr(1:ineigal))
         H.group[igroupA0].isad_gr = np.zeros(ineigal, dtype=np.int32)
         H.group[igroupA0].rho_saddle_gr = np.zeros(ineigal, dtype=np.float64)
 
@@ -1248,47 +1242,47 @@ def compute_saddle_list():
         neig=H.group[igroupA0].nhnei
         if(neig>0):
             ineig=0
-            ipar1=mem['firstpart'][igroupA0]
-            H.allocate('rho_sad', neig, dtype=np.float64)
+            ipar1=mem['firstpart_1313'][igroupA0]
+            rho_sad = np.zeros(neig, dtype=np.float64)
     # Loop on all the members of the group
             while (ipar1>0):
-                density1=mem['density'][ipar1-1]
+                density1=mem['density_1312'][ipar1-1]
                 for idist0 in range(H.nhop):
-                    ipar2=mem['iparneigh'][idist0,ipar1-1]
-                    igroupB1=mem['igrouppart'][ipar2-1]
-        # we test that we are in a group (i.e. that mem['density'][ipar] >= rho_hold
+                    ipar2=mem['iparneigh_1312'][idist0,ipar1-1]
+                    igroupB1=mem['igrouppart_1313'][ipar2-1]
+        # we test that we are in a group (i.e. that mem['density_1312'][ipar] >= rho_hold
         # and that this group is different from the one we are sitting on
                     if( (igroupB1>0)and(igroupB1 != igroupA0+1) ):
-                        density2=mem['density'][ipar2-1]
-                        if ( not mem['touch'][igroupB1-1] ):
+                        density2=mem['density_1312'][ipar2-1]
+                        if ( not touch[igroupB1-1] ):
                             ineig += 1
-                            mem['touch'][igroupB1-1]=True
-                            mem['listg'][igroupB1-1]=ineig
+                            touch[igroupB1-1]=True
+                            listg[igroupB1-1]=ineig
                             rho_sad12=min(density1,density2)
-                            mem['rho_sad'][ineig-1]=rho_sad12
+                            rho_sad[ineig-1]=rho_sad12
                             H.group[igroupA0].isad_gr[ineig-1]=igroupB1
                         else:
-                            ineig2=mem['listg'][igroupB1-1]
+                            ineig2=listg[igroupB1-1]
                             rho_sad12=min(density1,density2)
-                            mem['rho_sad'][ineig2-1]=max(mem['rho_sad'][ineig2-1],rho_sad12)
+                            rho_sad[ineig2-1]=max(rho_sad[ineig2-1],rho_sad12)
         # Next member
-                ipar1=mem['idpart'][ipar1-1]
+                ipar1=mem['idpart_1311'][ipar1-1]
             if (ineig!=neig):
     # Consistency checking
                 print('ERROR in compute_saddle_list :')
                 print('The number of neighbourgs does not match.')
                 raise ValueError('ineig, neig =',ineig,neig)
 
-            H.group[igroupA0].rho_saddle_gr[:ineig]=mem['rho_sad'][:ineig]
-            H.deallocate('rho_sad')
+            H.group[igroupA0].rho_saddle_gr[:ineig]=rho_sad[:ineig]
+            del rho_sad
     # Reinitialize touch
             for inA0 in range(ineig):
                 igroupB1=H.group[igroupA0].isad_gr[inA0]
-                mem['touch'][igroupB1-1]=False
+                touch[igroupB1-1]=False
     # No neighbourg
 
-    H.deallocate('touch')
-    H.deallocate('listg')
+    del touch
+    del listg
 
     if (H.verbose): print('Establish symmetry in connections...')
 
@@ -1327,42 +1321,35 @@ def compute_saddle_list():
     for igroupA0 in range(H.ngroups):
         neig=H.group[igroupA0].nhnei
         if (neig>0):
-            H.allocate('rho_sad', neig, dtype=np.float64)
-            H.allocate('isad', neig, dtype=np.int32)
+            rho_sad = np.zeros(neig, dtype=np.float64)
+            isad = np.zeros(neig, dtype=np.int32)
             ineig=0
             for inA0 in range(neig):
                 igroupB1=H.group[igroupA0].isad_gr[inA0]
                 if (igroupB1>0):
                     ineig += 1
-                    mem['rho_sad'][ineig]=H.group[igroupA0].rho_saddle_gr[inA0]
-                    mem['isad'][ineig]=igroupB1
+                    rho_sad[ineig]=H.group[igroupA0].rho_saddle_gr[inA0]
+                    isad[ineig]=igroupB1
 
-            # deallocate(group[igroupA0].isad_gr)
-            # deallocate(group[igroupA0].rho_saddle_gr)
             H.group[igroupA0].isad_gr = None
             H.group[igroupA0].rho_saddle_gr = None
             ineigal=max(ineig,1)
-            # H.allocate(group[igroupA0].isad_gr(ineigal))
-            # H.allocate(group[igroupA0].rho_saddle_gr(ineigal))
             H.group[igroupA0].isad_gr = np.zeros(ineigal, dtype=np.int32)
             H.group[igroupA0].rho_saddle_gr = np.zeros(ineigal, dtype=np.float64)
             H.group[igroupA0].nhnei=ineig
             if (ineig>0):
     # sort the saddle points by decreasing order
-                # H.allocate(indx(ineig))
-                # call indexx(ineig,rho_sad,indx)
-                indx = np.argsort(mem['rho_sad'][:ineig])
-                H.group[igroupA0].isad_gr = mem['isad'][indx]
-                H.group[igroupA0].rho_saddle_gr = mem['rho_sad'][indx]
-                # deallocate(indx)
-            H.deallocate('rho_sad')
-            H.deallocate('isad')
+                indx = np.argsort(rho_sad[:ineig])
+                H.group[igroupA0].isad_gr = isad[indx]
+                H.group[igroupA0].rho_saddle_gr = rho_sad[indx]
+            del rho_sad
+            del isad
 
-    H.deallocate('iparneigh')
-    H.deallocate('igrouppart')
+    H.deallocate('iparneigh_1312')
+    H.deallocate('igrouppart_1313')
 
 #=======================================================================
-def compute_density(ipar1,dist2_0,iparnei):
+def compute_density_13121(ipar1,dist2_0,iparnei):
 #=======================================================================
     # real(kind=8)          :: dist2_0(0:H.nvoisins)
     # integer(kind=4)       :: iparnei(H.nvoisins)
@@ -1376,20 +1363,20 @@ def compute_density(ipar1,dist2_0,iparnei):
     unsr=1./r
     contrib=0.
     for idist0 in range(H.nvoisins-1):
-        if(H.allocated('mass')):
-            contrib += mem['mass'][iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
+        if(H.allocated('mass_10')):
+            contrib += mem['mass_10'][iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
         else:
             contrib += H.massp*spline(np.sqrt(dist2_0[idist0+1])*unsr)
     # Add the contribution of the particle itself and normalize properly
     # to get a density with average unity (if computed on an uniform grid)
     # note that this assumes that the total mass in the box is normalized to 1.
-    if(H.allocated('mass')):
-        mem['density'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+mem['mass'][ipar1-1]) /(H.pi*r**3)
+    if(H.allocated('mass_10')):
+        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+mem['mass_10'][ipar1-1]) /(H.pi*r**3)
     else:
-        mem['density'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib + H.massp) /(H.pi*r**3)
+        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib + H.massp) /(H.pi*r**3)
 
 #=======================================================================
-def find_nearest_parts(ipar1,dist2_0,iparnei):
+def find_nearest_parts_13120(ipar1,dist2_0,iparnei):
 #=======================================================================
     # integer(kind=4) :: ipar1,idist,icell_identity,inccellpart
     # real(kind=8)    :: dist2_0(0:H.nvoisins)
@@ -1397,19 +1384,19 @@ def find_nearest_parts(ipar1,dist2_0,iparnei):
     # real(kind=8)    :: poshere(1:3)
     poshere = np.zeros(3, dtype=np.float64)
 
-    poshere[:3]=mem['pos'][ipar1-1,:3]
+    poshere[:3]=mem['pos_10'][ipar1-1,:3]
     dist2_0[0]=0.
     for idist0 in range(H.nvoisins):
         dist2_0[idist0+1]=H.bignum
     icell_identity1 =1
     # inccellpart    =0
     # walk_tree(icell_identity1,poshere,dist2_0,ipar1,inccellpart,iparnei)
-    walk_tree(icell_identity1,poshere,dist2_0,ipar1,iparnei)
+    walk_tree_131200(icell_identity1,poshere,dist2_0,ipar1,iparnei)
 
 
 #=======================================================================
 # def walk_tree(icellidin1,poshere,dist2_0, iparid,inccellpart,iparnei):
-def walk_tree(icellidin1,poshere,dist2_0, iparid1,iparnei):
+def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
 #=======================================================================
     '''
     The subroutine 
@@ -1435,19 +1422,19 @@ def walk_tree(icellidin1,poshere,dist2_0, iparid1,iparnei):
     # integer(kind=4) :: i,first_pos_this_node
     # real(kind=8)    :: distance2p
 
-    icell_identity1 = mem['firstchild'][icellidin1-1]
+    icell_identity1 = mem['firstchild_1311'][icellidin1-1]
     inc=1
     discell2_0[0]=0
     discell2_0[1:]=1e30
     # Until icell_identity1==0: (Final leaf of tree)
     # Calc distance (poshere <-> cells)
     while (icell_identity1 != 0):
-        sc=mem['size_cell'][icell_identity1-1]
-        dx=abs(mem['pos_cell'][0,icell_identity1-1]-poshere[0])
+        sc=mem['size_cell_1311'][icell_identity1-1]
+        dx=abs(mem['pos_cell_1311'][0,icell_identity1-1]-poshere[0])
         dx=max(0.,min(dx,H.xlong-dx)-sc)
-        dy=abs(mem['pos_cell'][1,icell_identity1-1]-poshere[1])
+        dy=abs(mem['pos_cell_1311'][1,icell_identity1-1]-poshere[1])
         dy=max(0.,min(dy,H.ylong-dy)-sc)
-        dz=abs(mem['pos_cell'][2,icell_identity1-1]-poshere[2])
+        dz=abs(mem['pos_cell_1311'][2,icell_identity1-1]-poshere[2])
         dz=max(0.,min(dz,H.zlong-dz)-sc)
         distance2=dx**2+dy**2+dz**2
         if (distance2 < dist2_0[H.nvoisins]):
@@ -1459,22 +1446,22 @@ def walk_tree(icellidin1,poshere,dist2_0, iparid1,iparnei):
             discell2_0[idist+1]=distance2
             icid[idist]=icell_identity1
             inc += 1
-        icell_identity1=mem['sister'][icell_identity1-1]
+        icell_identity1=mem['sister_1311'][icell_identity1-1]
     # inccellpart += inc-1
     # Loop for counted cells,
     # Update the closest particle ID(in iparnei) and the distance to that part(in dist2_0)
     for ic0 in range(inc-1):
         icellid_out1=icid[ic0]
-        if (mem['firstchild'][icellid_out1-1] < 0):
+        if (mem['firstchild_1311'][icellid_out1-1] < 0):
             if (discell2_0[ic0+1]<dist2_0[H.nvoisins]):
-                first_pos_this_node=-mem['firstchild'][icellid_out1-1]-1
-                for i1 in frange(first_pos_this_node+1, first_pos_this_node+mem['mass_cell'][icellid_out1]):
-                    iparcell1=mem['idpart'][i1-1]
-                    dx=abs(mem['pos'][iparcell1-1, 0]-poshere[0])
+                first_pos_this_node=-mem['firstchild_1311'][icellid_out1-1]-1
+                for i1 in frange(first_pos_this_node+1, first_pos_this_node+mem['mass_cell_1311'][icellid_out1]):
+                    iparcell1=mem['idpart_1311'][i1-1]
+                    dx=abs(mem['pos_10'][iparcell1-1, 0]-poshere[0])
                     dx=max(0.,min(dx,H.xlong-dx))
-                    dy=abs(mem['pos'][iparcell1-1, 1]-poshere[1])
+                    dy=abs(mem['pos_10'][iparcell1-1, 1]-poshere[1])
                     dy=max(0.,min(dy,H.ylong-dy))
-                    dz=abs(mem['pos'][iparcell1-1, 2]-poshere[2])
+                    dz=abs(mem['pos_10'][iparcell1-1, 2]-poshere[2])
                     dz=max(0.,min(dz,H.zlong-dz))
                     distance2p=dx**2+dy**2+dz**2
                     if (distance2p < dist2_0[H.nvoisins]): 
@@ -1488,11 +1475,11 @@ def walk_tree(icellidin1,poshere,dist2_0, iparid1,iparnei):
                             iparnei[idist1]=iparcell1
         elif (discell2_0[ic0+1] < dist2_0[H.nvoisins]):
             # walk_tree(icellid_out1,poshere,dist2_0,iparid1,inccellpart,iparnei)
-            walk_tree(icellid_out1,poshere,dist2_0,iparid1,iparnei)
+            walk_tree_131200(icellid_out1,poshere,dist2_0,iparid1,iparnei)
         else: pass
 
 #=======================================================================
-def create_tree_structure():
+def create_tree_structure_1311():
 #=======================================================================
     # integer(kind=4) :: nlevel,inccell,idmother,ipar
     # integer(kind=4) :: npart_this_node,first_pos_this_node
@@ -1506,15 +1493,15 @@ def create_tree_structure():
     # we modified to put 2*H.npart-1 instead of 2*H.npart so that AdaptaHOP can work on a 1024^3, 2*(1024^3)-1 is still an integer(kind=4), 2*(1024^3) is not 
     H.ncellmx=2*H.npart -1
     H.ncellbuffer=max(round(0.1*H.npart),H.ncellbuffermin)
-    H.allocate('idpart',H.npart, dtype=np.int32)
-    H.allocate('idpart_tmp',H.npart, dtype=np.int32)
-    H.allocate('mass_cell',H.ncellmx, dtype=np.int32)
-    H.allocate('size_cell',H.ncellmx, dtype=np.float64)
-    H.allocate('pos_cell',(3,H.ncellmx), dtype=np.float64)
-    H.allocate('sister',H.ncellmx, dtype=np.int32)
-    H.allocate('firstchild',H.ncellmx, dtype=np.int32)
+    H.allocate('idpart_1311',H.npart, dtype=np.int32)
+    H.allocate('idpart_tmp_1311',H.npart, dtype=np.int32)
+    H.allocate('mass_cell_1311',H.ncellmx, dtype=np.int32)
+    H.allocate('size_cell_1311',H.ncellmx, dtype=np.float64)
+    H.allocate('pos_cell_1311',(3,H.ncellmx), dtype=np.float64)
+    H.allocate('sister_1311',H.ncellmx, dtype=np.int32)
+    H.allocate('firstchild_1311',H.ncellmx, dtype=np.int32)
     
-    mem['idpart'][:] = np.arange(H.npart, dtype=np.int32)+1
+    mem['idpart_1311'][:] = np.arange(H.npart, dtype=np.int32)+1
 
     nlevel=0
     inccell=0
@@ -1522,26 +1509,26 @@ def create_tree_structure():
     pos_this_node[:]=0.
     npart_this_node=H.npart
     first_pos_this_node=0
-    mem['idpart_tmp'][:]=0
-    mem['pos_cell'][:]=0
-    mem['size_cell'][:]=0
-    mem['mass_cell'][:]=0
-    mem['sister'][:]=0
-    mem['firstchild'][:]=0
+    mem['idpart_tmp_1311'][:]=0
+    mem['pos_cell_1311'][:]=0
+    mem['size_cell_1311'][:]=0
+    mem['mass_cell_1311'][:]=0
+    mem['sister_1311'][:]=0
+    mem['firstchild_1311'][:]=0
     H.sizeroot = np.double( np.max([H.xlong,H.ylong,H.zlong]) )
 
-    create_KDtree(nlevel,pos_this_node, npart_this_node,first_pos_this_node, idmother)
+    create_KDtree_13110(nlevel,pos_this_node, npart_this_node,first_pos_this_node, idmother)
     ncell=inccell
 
     if (H.verbose): print('total number of cells =',ncell)
 
-    H.deallocate('idpart_tmp')
+    H.deallocate('idpart_tmp_1311')
     raise ValueError("stop")
 
 
 from multiprocessing import Pool
 #=======================================================================
-def create_KDtree(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_this_node, first_pos_this_node,idmother,pos_ref_0=None):
+def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_this_node, first_pos_this_node,idmother,pos_ref_0=None):
 #=======================================================================
 #  nlevel : level of the H.node_0 in the octree. Level zero corresponds to 
 #           the full box
@@ -1620,48 +1607,44 @@ def create_KDtree(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_thi
             ncellmx_old=H.ncellmx
             H.ncellmx += H.ncellbuffer
             if(H.megaverbose): print(f'ncellmx{ncellmx_old} is too small. Increase(+{H.ncellbuffer}) it and reallocate arrays accordingly')
-            H.allocate('mass_cell_tmp',ncellmx_old, dtype=np.int32)
-            mem['mass_cell_tmp'][:ncellmx_old]=mem['mass_cell'][:ncellmx_old]
-            H.deallocate('mass_cell')
-            H.allocate('mass_cell',H.ncellmx, dtype=np.int32)
-            mem['mass_cell'][:ncellmx_old]=mem['mass_cell_tmp'][:ncellmx_old]
-            H.deallocate('mass_cell_tmp')
-            H.allocate('sister_tmp',ncellmx_old, dtype=np.int32)
-            mem['sister_tmp'][:ncellmx_old]=mem['sister'][:ncellmx_old]
-            H.deallocate('sister')
-            H.allocate('sister',H.ncellmx, dtype=np.int32)
-            mem['sister'][:ncellmx_old]=mem['sister_tmp'][:ncellmx_old]
-            H.deallocate('sister_tmp')
-            H.allocate('firstchild_tmp',ncellmx_old, dtype=np.int32)
-            mem['firstchild_tmp'][:ncellmx_old]=mem['firstchild'][:ncellmx_old]
-            H.deallocate('firstchild')
-            H.allocate('firstchild',H.ncellmx, dtype=np.int32)
-            mem['firstchild'][:ncellmx_old]=mem['firstchild_tmp'][:ncellmx_old]
-            mem['firstchild'][ncellmx_old:H.ncellmx]=0
-            H.deallocate('firstchild_tmp')
-            H.allocate('size_cell_tmp',ncellmx_old,dtype=np.float64)
-            mem['size_cell_tmp'][:ncellmx_old]=mem['size_cell'][:ncellmx_old]
-            H.deallocate('size_cell')
-            H.allocate('size_cell',H.ncellmx,dtype=np.float64)
-            mem['size_cell'][:ncellmx_old]=mem['size_cell_tmp'][:ncellmx_old]
-            H.deallocate('size_cell_tmp')
-            H.allocate('pos_cell_tmp',(3,ncellmx_old))
-            mem['pos_cell_tmp'][:3,:ncellmx_old]=mem['pos_cell'][:3,:ncellmx_old]
-            H.deallocate('pos_cell')
-            H.allocate('pos_cell',(3,H.ncellmx))
-            mem['pos_cell'][:3,:ncellmx_old]=mem['pos_cell_tmp'][:3,:ncellmx_old]
-            H.deallocate('pos_cell_tmp')
-        mem['pos_cell'][:3,inccell-1]=pos_this_node[:3]
-        mem['mass_cell'][inccell-1]=npart_this_node
-        mem['size_cell'][inccell-1]=2.**(-nlevel)*H.sizeroot*0.5
+            tmp = np.zeros(ncellmx_old, dtype=np.int32)
+            tmp[:ncellmx_old]=mem['mass_cell_1311'][:ncellmx_old]
+            H.deallocate('mass_cell_1311')
+            H.allocate('mass_cell_1311',H.ncellmx, dtype=np.int32)
+            mem['mass_cell_1311'][:ncellmx_old]=tmp[:ncellmx_old]
+            tmp[:ncellmx_old]=mem['sister_1311'][:ncellmx_old]
+            H.deallocate('sister_1311')
+            H.allocate('sister_1311',H.ncellmx, dtype=np.int32)
+            mem['sister_1311'][:ncellmx_old]=tmp[:ncellmx_old]
+            tmp[:ncellmx_old]=mem['firstchild_1311'][:ncellmx_old]
+            H.deallocate('firstchild_1311')
+            H.allocate('firstchild_1311',H.ncellmx, dtype=np.int32)
+            mem['firstchild_1311'][:ncellmx_old]=tmp[:ncellmx_old]
+            mem['firstchild_1311'][ncellmx_old:H.ncellmx]=0
+            del tmp
+            tmp = np.zeros(ncellmx_old, dtype=np.float64)
+            tmp[:ncellmx_old]=mem['size_cell_1311'][:ncellmx_old]
+            H.deallocate('size_cell_1311')
+            H.allocate('size_cell_1311',H.ncellmx,dtype=np.float64)
+            mem['size_cell_1311'][:ncellmx_old]=tmp[:ncellmx_old]
+            del tmp
+            pos_cell_tmp = np.zeros((3,ncellmx_old), dtype=np.float64)
+            pos_cell_tmp[:3,:ncellmx_old]=mem['pos_cell_1311'][:3,:ncellmx_old]
+            H.deallocate('pos_cell_1311')
+            H.allocate('pos_cell_1311',(3,H.ncellmx))
+            mem['pos_cell_1311'][:3,:ncellmx_old]=pos_cell_tmp[:3,:ncellmx_old]
+            del pos_cell_tmp
+        mem['pos_cell_1311'][:3,inccell-1]=pos_this_node[:3]
+        mem['mass_cell_1311'][inccell-1]=npart_this_node
+        mem['size_cell_1311'][inccell-1]=2.**(-nlevel)*H.sizeroot*0.5
         if (idmother>0):
             # If this is not the root cell, we link it to its mother
-            mem['sister'][inccell-1]=mem['firstchild'][idmother-1]
-            mem['firstchild'][idmother-1]=inccell
+            mem['sister_1311'][inccell-1]=mem['firstchild_1311'][idmother-1]
+            mem['firstchild_1311'][idmother-1]=inccell
         if ((npart_this_node <= H.npartpercell) or (nlevel==H.nlevelmax)):
             # If there is only `H.npartpercell` particles in the `H.node_0` or we have reach
             # maximum level of refinement, we are done
-            mem['firstchild'][inccell-1]=-(first_pos_this_node+1)
+            mem['firstchild_1311'][inccell-1]=-(first_pos_this_node+1)
             return
     else:
         # Stop refinement due to no particle in leaf cell
@@ -1670,10 +1653,10 @@ def create_KDtree(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_thi
 
     #  Count the number of particles in each subcell of this H.node_0
     incsubcell_0[:]=0
-    idpart1s = mem['idpart'][first_pos_this_node : first_pos_this_node+npart_this_node]
-    # xtests = mem['pos'][idpart1s-1,:3] - pos_this_node[:3]
+    idpart1s = mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node]
+    # xtests = mem['pos_10'][idpart1s-1,:3] - pos_this_node[:3]
     # timereport.append((f'{icount} xtests', time.time()-ref)); ref = time.time(); icount+=1
-    icids = icellids(mem['pos'][idpart1s-1,:3] - pos_this_node[:3])
+    icids = icellids(mem['pos_10'][idpart1s-1,:3] - pos_this_node[:3])
     timereport.append((f'{icount} icellids', time.time()-ref)); ref = time.time(); icount+=1
     uni,count = np.unique(icids, return_counts=True)
     timereport.append((f'{icount} unique', time.time()-ref)); ref = time.time(); icount+=1
@@ -1692,12 +1675,12 @@ def create_KDtree(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_thi
     #  to the same subnode. Put the result in idpart_tmp.
     argsort = np.argsort(icids, kind='mergesort')
     timereport.append((f'{icount} argsort', time.time()-ref)); ref = time.time(); icount+=1
-    mem['idpart'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort]
+    mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort]
     timereport.append((f'{icount} idpart', time.time()-ref)); ref = time.time(); icount+=1
     
     #  Put back the sorted ids in idpart
     # for ipar1 in frange(first_pos_this_node+1, first_pos_this_node+npart_this_node):
-    #     mem['idpart'][ipar1-1]=mem['idpart_tmp'][ipar1-1]
+    #     mem['idpart_1311'][ipar1-1]=mem['idpart_tmp_1311'][ipar1-1]
     for tmp in timereport:
         print(tmp)
 
@@ -1712,59 +1695,59 @@ def create_KDtree(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_thi
         first_pos_this_node_out=first_pos_this_node+nsubcell_0[j0]
         npart_this_node_out=incsubcell_0[j0]
         timereport.append((f'{icount} before recursive', time.time()-ref)); ref = time.time(); icount+=1
-        create_KDtree(nlevel_out,pos_this_node_out,npart_this_node_out,first_pos_this_node_out,idmother_out,pos_ref_0=pos_ref_0)
+        create_KDtree_13110(nlevel_out,pos_this_node_out,npart_this_node_out,first_pos_this_node_out,idmother_out,pos_ref_0=pos_ref_0)
 
 
 
-def create_KDtree_mod():
-    # cpos = np.zeros((pos.shape[0],3), dtype=np.float128)
-    # octarr["done"] = False
-    octarr = np.zeros(
-        mem['pos'].shape[0], 
-        dtype=[
-            ("oct1", np.int64),("oct2", np.int64), ("lvl", np.int8), ("done", bool), 
-            ("inccell", np.int64), ("idmother", np.int64)
-            ])
-    octarr["done"] = False
-    cpos = np.zeros((mem['pos'].shape[0],3), dtype=np.float128)
-    octarr = refine(mem['pos'], octarr, cpos)
-    lexsort = np.lexsort((octarr["oct2"], octarr["oct1"]))
-    mem['idpart'] = mem['idpart'][lexsort]
+# def create_KDtree_mod():
+#     # cpos = np.zeros((pos.shape[0],3), dtype=np.float128)
+#     # octarr["done"] = False
+#     octarr = np.zeros(
+#         mem['pos_10'].shape[0], 
+#         dtype=[
+#             ("oct1", np.int64),("oct2", np.int64), ("lvl", np.int8), ("done", bool), 
+#             ("inccell", np.int64), ("idmother", np.int64)
+#             ])
+#     octarr["done"] = False
+#     cpos = np.zeros((mem['pos_10'].shape[0],3), dtype=np.float128)
+#     octarr = refine(mem['pos_10'], octarr, cpos)
+#     lexsort = np.lexsort((octarr["oct2"], octarr["oct1"]))
+#     mem['idpart_1311'] = mem['idpart_1311'][lexsort]
 
 
-def refine(pos, octarr, cpos):
-    from num_rec import icellids
-    yet = ~octarr["done"]
-    ncell_new = 1
-    inccell = 1
-    while(True in yet):
-        nlevel = int( np.max(octarr["lvl"]) )
-        if(nlevel >= H.nlevelmax): break
-        octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
-        ncell_old = ncell_new
-        icids = icellids(pos[yet]-cpos[yet])+1
-        if(nlevel > 14):
-            octarr['oct2'] *= 10
-            octarr['oct2'][yet] += icids
-        else:
-            octarr['oct1'] *= 10
-            octarr['oct1'][yet] += icids
-        octarr['lvl'][yet] += 1
+# def refine(pos, octarr, cpos):
+#     from num_rec import icellids
+#     yet = ~octarr["done"]
+#     ncell_new = 1
+#     inccell = 1
+#     while(True in yet):
+#         nlevel = int( np.max(octarr["lvl"]) )
+#         if(nlevel >= H.nlevelmax): break
+#         octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
+#         ncell_old = ncell_new
+#         icids = icellids(pos[yet]-cpos[yet])+1
+#         if(nlevel > 14):
+#             octarr['oct2'] *= 10
+#             octarr['oct2'][yet] += icids
+#         else:
+#             octarr['oct1'] *= 10
+#             octarr['oct1'][yet] += icids
+#         octarr['lvl'][yet] += 1
 
-        octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
-        uni, count = np.unique(octid[yet], return_counts=True)
-        if(1 in count):
-            leafind = np.where(count==1)[0]
-            leaf = uni[leafind]
-            isin = np.isin(octid, leaf)
-            octarr["done"][isin] = True
-        a,b = np.unique(octarr['lvl'], return_counts=True)
-        ncell_new = np.sum(b[:-1]) + len( np.unique(octid[octarr['lvl'] == a[-1]]) )
-        print(f"[lvl={nlevel}] {ncell_old} -> {ncell_new} [{octarr[0]}, {octarr[yet][0]}]")
-        cpos[yet] += H.sizeroot*H.pos_ref_0[:3,icids-1].T * 2**(-nlevel-2)
-        yet = ~octarr["done"]
-    print(f"[lvl={nlevel}] KDtree done")
-    return octarr
+#         octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
+#         uni, count = np.unique(octid[yet], return_counts=True)
+#         if(1 in count):
+#             leafind = np.where(count==1)[0]
+#             leaf = uni[leafind]
+#             isin = np.isin(octid, leaf)
+#             octarr["done"][isin] = True
+#         a,b = np.unique(octarr['lvl'], return_counts=True)
+#         ncell_new = np.sum(b[:-1]) + len( np.unique(octid[octarr['lvl'] == a[-1]]) )
+#         print(f"[lvl={nlevel}] {ncell_old} -> {ncell_new} [{octarr[0]}, {octarr[yet][0]}]")
+#         cpos[yet] += H.sizeroot*H.pos_ref_0[:3,icids-1].T * 2**(-nlevel-2)
+#         yet = ~octarr["done"]
+#     print(f"[lvl={nlevel}] KDtree done")
+#     return octarr
 
 
 

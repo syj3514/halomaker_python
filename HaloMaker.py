@@ -33,13 +33,13 @@ if(len(sys.argv)<2): H.data_dir = '.'
 else: H.data_dir = sys.argv[1]
 # initialize cosmological and technical parameters of the N_Body simulation 
 print("\n[          init_cosmo          ]")
-compute_halo_props.init()
+compute_halo_props.init_0()
 
 # loop over snapshots
 print("\n[      loop over snapshots     ]")
 for istep1 in range(1,H.nsteps,1):
     H.numero_step = istep1
-    compute_halo_props.new_step()
+    compute_halo_props.new_step_1()
     print(H.numero_step,' of ',H.nsteps)
     print()
     print()
