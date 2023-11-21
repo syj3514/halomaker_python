@@ -675,6 +675,7 @@ def compute_mean_density_and_np_1312():
     # integer, dimension(H.nvoisins)        :: iparnei
     # real(kind=8)                        :: densav
     dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
+    iparnei = np.empty(H.nvoisins, dtype=np.int32)
 
     if (H.verbose): print('Compute mean density for each particle...')
 
@@ -687,9 +688,9 @@ def compute_mean_density_and_np_1312():
     # !$OMP DEFAULT(SHARED) &
     # !$OMP PRIVATE(ipar,dist2_0,iparnei)
     for ipar1 in frange(1,H.npart):
-        find_nearest_parts_13120(ipar1,dist2_0,mem['iparnei'])
-        compute_density_13121(ipar1,dist2_0,mem['iparnei'])
-        mem['iparneigh_1312'][:H.nhop,ipar1-1]=mem['iparnei'][:H.nhop]
+        dist2_0, iparnei = find_nearest_parts_13120(ipar1,dist2_0,iparnei)
+        compute_density_13121(ipar1,dist2_0,iparnei)
+        mem['iparneigh_1312'][:H.nhop,ipar1-1]=iparnei[:H.nhop]
     # !$OMP END PARALLEL DO
 
     # Check for average density
@@ -1386,12 +1387,14 @@ def find_nearest_parts_13120(ipar1,dist2_0,iparnei):
 
     poshere[:3]=mem['pos_10'][ipar1-1,:3]
     dist2_0[0]=0.
-    for idist0 in range(H.nvoisins):
-        dist2_0[idist0+1]=H.bignum
+    dist2_0[1:] = H.bignum
+    # for idist0 in range(H.nvoisins):
+    #     dist2_0[idist0+1]=H.bignum
     icell_identity1 =1
     # inccellpart    =0
     # walk_tree(icell_identity1,poshere,dist2_0,ipar1,inccellpart,iparnei)
-    walk_tree_131200(icell_identity1,poshere,dist2_0,ipar1,iparnei)
+    dist2_0, iparnei = walk_tree_131200(icell_identity1,poshere,dist2_0,ipar1,iparnei)
+    return dist2_0, iparnei
 
 
 #=======================================================================
@@ -1475,8 +1478,9 @@ def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
                             iparnei[idist1]=iparcell1
         elif (discell2_0[ic0+1] < dist2_0[H.nvoisins]):
             # walk_tree(icellid_out1,poshere,dist2_0,iparid1,inccellpart,iparnei)
-            walk_tree_131200(icellid_out1,poshere,dist2_0,iparid1,iparnei)
+            dist2_0, iparnei = walk_tree_131200(icellid_out1,poshere,dist2_0,iparid1,iparnei)
         else: pass
+    return dist2_0, iparnei
 
 #=======================================================================
 def create_tree_structure_1311():
@@ -1494,7 +1498,7 @@ def create_tree_structure_1311():
     H.ncellmx=2*H.npart -1
     H.ncellbuffer=max(round(0.1*H.npart),H.ncellbuffermin)
     H.allocate('idpart_1311',H.npart, dtype=np.int32)
-    H.allocate('idpart_tmp_1311',H.npart, dtype=np.int32)
+    # H.allocate('idpart_tmp_1311',H.npart, dtype=np.int32)
     H.allocate('mass_cell_1311',H.ncellmx, dtype=np.int32)
     H.allocate('size_cell_1311',H.ncellmx, dtype=np.float64)
     H.allocate('pos_cell_1311',(3,H.ncellmx), dtype=np.float64)
@@ -1509,7 +1513,7 @@ def create_tree_structure_1311():
     pos_this_node[:]=0.
     npart_this_node=H.npart
     first_pos_this_node=0
-    mem['idpart_tmp_1311'][:]=0
+    # mem['idpart_tmp_1311'][:]=0
     mem['pos_cell_1311'][:]=0
     mem['size_cell_1311'][:]=0
     mem['mass_cell_1311'][:]=0
@@ -1522,7 +1526,7 @@ def create_tree_structure_1311():
 
     if (H.verbose): print('total number of cells =',ncell)
 
-    H.deallocate('idpart_tmp_1311')
+    # H.deallocate('idpart_tmp_1311')
     raise ValueError("stop")
 
 
@@ -1672,10 +1676,10 @@ def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npa
     timereport.append((f'{icount} cumsum', time.time()-ref)); ref = time.time(); icount+=1
 
     #  Sort the array of ids (idpart) to gather the particles belonging
-    #  to the same subnode. Put the result in idpart_tmp.
+    #  to the same subnode. Put the result in `idpart_tmp`.
     argsort = np.argsort(icids, kind='mergesort')
     timereport.append((f'{icount} argsort', time.time()-ref)); ref = time.time(); icount+=1
-    mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort]
+    mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort] # <- This is main part?
     timereport.append((f'{icount} idpart', time.time()-ref)); ref = time.time(); icount+=1
     
     #  Put back the sorted ids in idpart
