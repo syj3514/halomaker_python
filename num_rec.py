@@ -1,4 +1,28 @@
 import numpy as np
+from numba import njit
+
+@njit
+def counting_argsort_8(keys):
+    n = keys.size
+    cnt = np.zeros(8, np.int32)
+    for i in range(n):
+        cnt[keys[i]] += 1
+
+    start = np.empty(8, np.int32)
+    s = 0
+    for k in range(8):
+        start[k] = s
+        s += cnt[k]
+        cnt[k] = 0  # reuse as "filled"
+
+    order = np.empty(n, np.int32)
+    for i in range(n):  # stable
+        k = keys[i]
+        j = start[k] + cnt[k]
+        order[j] = i
+        cnt[k] += 1
+
+    return order
 
 # For calculation of the age of the universe
 #***********************************************************************
@@ -253,7 +277,6 @@ def cubic(a1, a2, a3, a4):
 def spline(x):
 #=======================================================================
 #   Moved from `compute_neiKDtree_mod`
-#   real(kind=8) :: spline,x
 
     if (x<=1.):
         ans=1.-1.5*x**2+0.75*x**3
@@ -280,14 +303,16 @@ def icellid(xtest:np.ndarray):
 #  with the same conventions
 #=======================================================================
     # Moved from `compute_neiKDtree_mod`
-    # integer(kind=4) :: icellid,j,icellid3d(3)
-    # real(kind=8) :: xtest(3)
     assert xtest.shape == (3,)
     icellid3d = (xtest>=0).astype(np.int32)
     return icellid3d[0]+2*icellid3d[1]+4*icellid3d[2]
 
+
+
+# arr_for_icellids = 2 ** np.arange(3,dtype=np.int8)
+arr_for_icellids = np.array([1,2,4], dtype=np.int8)
 #=======================================================================
-def icellids(xtests:np.ndarray):
+def icellids(xtests:np.ndarray, pos_this_node=None, mode=1):
     '''
     (N,3) -> (N,)
     '''
@@ -305,15 +330,31 @@ def icellids(xtests:np.ndarray):
 #  For self-consistency, the array pos_ref_0 should be defined exactly 
 #  with the same conventions
 #=======================================================================
-    # Moved from `compute_neiKDtree_mod`
-    # integer(kind=4) :: icellid,j,icellid3d(3)
-    # real(kind=8) :: xtest(3)
-    # assert xtests.shape == (xtests.shape[0],3)
-    # icellid3d = (xtests>=0).astype(np.int32)
-    is_positive = xtests >= 0
-    icellid = np.sum(is_positive * 2 ** np.arange(3), axis=1)
-    return icellid
-    # return icellid3d[:,0]+2*icellid3d[:,1]+4*icellid3d[:,2] #shape = (xtests.shape[0],)
+    global arr_for_icellids 
+    if mode==0:
+        # Moved from `compute_neiKDtree_mod`
+        is_positive = xtests >= 0
+        icellid = np.sum(is_positive * arr_for_icellids, axis=1, dtype=np.int8)
+        return icellid
+    elif mode==1: # <--- this is the fastest
+        if pos_this_node is None:
+            b = (xtests >= 0).astype(np.uint8, copy=False)
+        else:
+            b = (xtests >= pos_this_node).astype(np.uint8, copy=False)
+        return (b @ arr_for_icellids).astype(np.uint8, copy=False)
 
+    elif mode==2:
+        if pos_this_node is None:
+            return (
+                (xtests[:, 0] >= 0).astype(np.uint8)
+                | ((xtests[:, 1] >= 0).astype(np.uint8) << 1)
+                | ((xtests[:, 2] >= 0).astype(np.uint8) << 2)
+            )
+        else:
+            return (
+                (xtests[:, 0] >= pos_this_node[0]).astype(np.uint8)
+                | ((xtests[:, 1] >= pos_this_node[1]).astype(np.uint8) << 1)
+                | ((xtests[:, 2] >= pos_this_node[2]).astype(np.uint8) << 2)
+            )
 
 

@@ -6,6 +6,10 @@ from scipy.io import FortranFile
 from tqdm import tqdm
 from multiprocessing import Pool
 
+import faulthandler, signal, sys
+faulthandler.enable()
+faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+
 #///////////////////////////////////////////////////////////////////////
 #***********************************************************************
 def read_data_10():
@@ -39,7 +43,7 @@ def read_data_10():
     H.file_num = f"{int(H.numstep):05d}"
     if(name_of_file[0] != '/'):
         name_of_file = f'{H.data_dir}/{name_of_file}'
-    print(f"> name_of_file: `{name_of_file}`")
+    print(f"name_of_file: `{name_of_file}`")
 
     # Note 1: old treecode SNAP format has to be converted [using SNAP_to_SIMPLE (on T3E)] 
     #     into new treecode SIMPLE (SN) format.
@@ -71,12 +75,13 @@ def read_data_10():
     elif(H.simtype=='Gd'): raise NotImplementedError("`Gd` format is not implemented yet")
     else: raise NotImplementedError(f"> Don''t know the snapshot format: `{H.simtype}`")
 
-    print(f"> aexp = {H.aexp}")
+    
     pos = mem['pos_10']
     print(f"> min max position (in box units)   : {np.min(pos)},{np.max(pos)}")
     vel = mem['vel_10']
     print(f"> min max velocities (in km/s)      : {np.min(vel)},{np.max(vel)}")
     print(f"> Reading done.")
+    print(f"> aexp = {H.aexp}")
 
 def skip_records(f, skip_num=1):
     """
@@ -144,11 +149,11 @@ def read_ramses_100(repository):
     H.omega_lambda_f = omega_l
     H.omega_c_f      = omega_k
     print(f"> From AMR file: `{nomfich}`")
-    print(f"\tncpu={H.ncpu}, ndim={H.ndim}, nstep_coarse={nstep_coarse}")
-    print(f"\tnlevelmax={H.nlevelmax}, ngridmax={ngridmax}")
-    print(f"\tt={tco:.3e}, aexp={aexp_ram:.3e}, hexp={hexp:.3e}")
-    print(f"\tomega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
-    print(f"\tboxlen={H.Lboxp:.3e} h-1 Mpc")
+    print(f">     ncpu={str(H.ncpu):>6}, ndim={H.ndim:1d}, nstep_coarse={nstep_coarse:6d}")
+    print(f">     nlevelmax={H.nlevelmax}, ngridmax={ngridmax}")
+    print(f">     t={tco:.3e}, aexp={aexp_ram:.3e}, hexp={hexp:.3e}")
+    print(f">     omega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
+    print(f">     boxlen={H.Lboxp:.3e} h-1 Mpc")
 
     # now read the particle data files
     nomfich = f"{repository}/part_{nchar}.out00001"
@@ -173,6 +178,7 @@ def read_ramses_100(repository):
     H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_10', (H.npart,), dtype=np.float64)
+    H.massalloc = True
   
     iterobj = range(1,H.ncpu+1)
     if(H.TQDM):
@@ -281,6 +287,7 @@ def _read_ramses_new_1010(icpu, kwargs):
         mem['mass_tmp_101'][idp[mask]-1] = tmpm[mask]
     return npart_tmp
 #***********************************************************************
+import time
 def read_ramses_new_101(repository, rver='Ra3'):
     ''' This routine reads DM particles dumped in the RAMSES format.
     implicit none
@@ -308,9 +315,9 @@ def read_ramses_new_101(repository, rver='Ra3'):
     signal.signal(signal.SIGPIPE, H.flush)
     signal.signal(signal.SIGTERM, H.flush)
     print()
-    print(f"\t#################################")
-    print(f"\t# Reading RAMSES version {rver} #")
-    print(f"\t#################################")
+    print(f"\t---------------------------------")
+    print(f"\t| Reading RAMSES version {rver}  ")
+    print(f"\t---------------------------------")
     # read cosmological params in header of amr file
     ipos    = repository.find("output_")
     nchar   = repository[ipos+7:ipos+12]
@@ -333,11 +340,11 @@ def read_ramses_new_101(repository, rver='Ra3'):
         omega_m,omega_l,omega_k,omega_b,dummy = temp[:5]
         temp = f.read_reals()
         aexp_ram, hexp = temp[:2]
-    print(f"\t> From AMR file: `{nomfich}`")
-    print(f"\t\tncpu={H.ncpu}, ndim={H.ndim}, nstep_coarse={nstep_coarse}")
-    print(f"\t\tnlevelmax={H.nlevelmax}, ngridmax={ngridmax}")
-    print(f"\t\tt={tco:.3e}, aexp={aexp_ram:.3e}, hexp={hexp:.3e}")
-    print(f"\t\tomega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
+    print(f"\t|> From AMR file: `{nomfich}`")
+    print(f"\t|>     ncpu={H.ncpu:6d}, ndim={H.ndim:1d}, nstep_coarse={nstep_coarse:6d}")
+    print(f"\t|>     nlevelmax={H.nlevelmax:3d}, ngridmax={ngridmax:8d}")
+    print(f"\t|>     t={tco:.3E}, aexp={aexp_ram:.3E}, hexp={hexp:.3E}")
+    print(f"\t|>     omega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
 
     nomfich = f"{repository}/info_{nchar}.txt"
     with open(nomfich, 'r') as f:
@@ -355,30 +362,23 @@ def read_ramses_new_101(repository, rver='Ra3'):
 
             # Process the name and value
             if name in ('unit_l', 'scale_l'):
-                scale_l = float(value)
+                scale_l = np.float64(value)
             elif name in ('unit_d', 'scale_d'):
-                scale_d = float(value)
+                scale_d = np.float64(value)
             elif name in ('unit_t', 'scale_t'):
-                scale_t = float(value)
+                scale_t = np.float64(value)
                 break
 
-    H.Lboxp          = boxlen*scale_l/3.08e24/aexp_ram # converts cgs to Mpc comoving
+    H.Lboxp          = boxlen*scale_l/np.float64(3.08e24)/aexp_ram # converts cgs to Mpc comoving
     H.aexp           = aexp_ram*H.af  
     H.omega_f        = omega_m
     H.omega_lambda_f = omega_l
     H.omega_c_f      = omega_k
-    print(f"\t\tboxlen={boxlen*scale_l/3.08e24:.3e} h-1 Mpc")
-    # print(f"\t> From AMR file: `{nomfich}`")
-    # print(f"\t\tncpu={H.ncpu}, ndim={H.ndim}, nstep_coarse={nstep_coarse}")
-    # print(f"\t\tnx={nx}, ny={ny}, nz={nz}")
-    # print(f"\t\tnlevelmax={H.nlevelmax}, ngridmax={ngridmax}")
-    # print(f"\t\tt={tco:.3e}, aexp={H.aexp:.3e}, hexp={hexp:.3e}")
-    # print(f"\t\tomega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
-    # print(f"\t\tboxlen={boxlen*scale_l:.3e} h-1 Mpc")
+    print(f"\t|>     boxlen={boxlen*scale_l/np.float64(3.08e24):.3e} h-1 Mpc")
 
     # now read the particle data files
     nomfich = f"{repository}/part_{nchar}.out00001"
-    print(f"\t> From part file: `{nomfich}`")
+    print(f"\t|> From Part file: `{nomfich}`")
     with FortranFile(nomfich, 'r') as f:
         H.ncpu, = f.read_ints()
         H.ndim, = f.read_ints()
@@ -397,17 +397,13 @@ def read_ramses_new_101(repository, rver='Ra3'):
             idum = f.read_ints()
             nsink, = f.read_ints()
         H.npart += npart2
-    #     nsize[icpu-1] = npart2
-    # cursors = np.cumsum(nsize)
-    # print(nsize)
 
-    print(f"\t> Found {H.npart} Total particles")
+    print(f"\t|> Found {H.npart} Total particles")
     H.npart -= nstar
     H.nbodies = H.npart
-    print(f"\t        {H.npart} non-stellar particles")
-    print(f"\t        {nstar} star particles")
-    print(f"\t> Reading positions and masses...")
-    
+    print(f"\t|        {H.npart} non-stellar particles")
+    print(f"\t|        {nstar} star particles")
+    print(f"\t|> Reading positions, velocities and masses...")
     H.allocate('pos_tmp_101', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_tmp_101', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_tmp_101', (H.npart,), dtype=np.float64)
@@ -418,26 +414,43 @@ def read_ramses_new_101(repository, rver='Ra3'):
     kwargs = {'repository':repository, 'rver':rver, 'nchar':nchar, 'ndim':H.ndim, 'scale_l':scale_l, 'scale_t':scale_t}
     iterobj = range(1,H.ncpu+1)
     if(H.nbPes==1): # Sequential reading
-        if(H.TQDM):
-            iterobj = tqdm(range(1,H.ncpu+1), desc=f"Reading parts(nbPes={H.nbPes})", unit="cpu")
+        # if(H.TQDM):
+        #     iterobj = tqdm(range(1,H.ncpu+1), desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu")
+        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
         npart_tmp = 0
         for icpu1 in iterobj:
             npart_tmp += _read_ramses_new_1010(icpu1, kwargs)
+            if(H.TQDM): pbar.update(1)
+        if(H.TQDM): pbar.close()
     else: # Multiprocessing
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         with Pool(processes=H.nbPes) as pool:
-            async_results = [pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs)) for icpu1 in iterobj]
+            async_results = []
+            for icpu1 in iterobj:
+                r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
+                async_results.append((icpu1, r))
             npart_tmp = 0
-            iterobj = async_results
-            if(H.TQDM):
-                iterobj = tqdm(async_results, desc=f"Reading parts(nbPes={H.nbPes})", unit="cpu", total=H.ncpu)
-            for async_result in iterobj:
-                npart_tmp += async_result.get()
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc="\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
+                try:
+                    npart_tmp += r.get(timeout=30)  # 30 sec
+                except TimeoutError:
+                    print(f"\n[HANG?] icpu={icpu1} still not finished after 600s")
+                    raise
+        #     iterobj = async_results
+        #     if(H.TQDM):
+        #         print(f"\t| > Creating tqdm iterator for process results...")
+        #         iterobj = tqdm(async_results, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", total=H.ncpu)
+        #     print(f"\t| > Waiting for all processes to finish...")
+        #     for async_result in iterobj:
+        #         npart_tmp += async_result.get()
+        #     print(f"\t| > All processes finished.")
+        # print(f"\t| > Escape Pool")
         signal.signal(signal.SIGTERM, H.flush)
+    print(f"\t|> Reading parts done", flush=True)
 
     H.npart = npart_tmp
     H.nbodies = H.npart
-    print(f"\t> Found {H.npart} DM particles after masking")
+    print(f"\t|> Found {H.npart} DM particles after masking")
     H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_10', (H.npart,), dtype=np.float64)
@@ -451,14 +464,14 @@ def read_ramses_new_101(repository, rver='Ra3'):
     # and renormalization flag is on ##
     massres = np.min(mem['mass_10'])*H.mboxp*1e11
     H.massp   = np.min(mem['mass_10'])
-    print(f"\t> particle mass (in M_sun)               = {massres}")
+    print(f"\t|> particle mass (in M_sun)               = {massres}")
     if(H.RENORM):
         massres /= mtot
         H.massp /= mtot
         print(f"\t> particle mass (in M_sun) after renorm  = {massres}")
     if(H.BIG_RUN):
         H.deallocate('mass_10')
-    print(f"\t#################################\n")
+    print(f"\t---------------------------------\n", flush=True)
 
 #***********************************************************************
 def write_tree_brick_1d():

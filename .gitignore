@@ -2,3 +2,4 @@ fort.log
 **/*.log
 **/*.pyc
 test.py
+**/*.pickle

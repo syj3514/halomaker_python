@@ -6,6 +6,8 @@ import compute_halo_props
 import sys
 # from halo_defs import *
 import halo_defs as H
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 print()
 print( '_______________________________________________________________________')
@@ -21,7 +23,7 @@ print( ' galics v1.0      :        J. Blaizot & J. Devriendt (2002)            '
 print( ' horizon v1.0     :        J. Devriendt & D. Tweed   (2006)            ')
 print( ' horizon v2.0     :        J. Devriendt & D. Tweed   (2007)            ')
 print( ' horizon v2.0.2   :        J. Devriendt, D. Tweed & J.Blaizot (2008)   ')
-print( ' horizon python   :        S. Jeon                   (2023)            ')
+print( ' horizon python   :        S. Jeon                   (2026)            ')
 print( )
 print( '_______________________________________________________________________'  )
 print( )
@@ -37,7 +39,7 @@ compute_halo_props.init_0()
 
 # loop over snapshots
 print("\n[      loop over snapshots     ]")
-for istep1 in range(1,H.nsteps,1):
+for istep1 in range(1,H.nsteps+1,1):
     H.numero_step = istep1
     compute_halo_props.new_step_1()
     print(H.numero_step,' of ',H.nsteps)

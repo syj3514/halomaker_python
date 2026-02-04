@@ -1,7 +1,7 @@
 from input_output import *
 import halo_defs as H
 from halo_defs import mem,halo,vector,frange
-import time
+import time, os
 import numpy as np
 from scipy.io import FortranFile
 
@@ -9,12 +9,26 @@ from scipy.io import FortranFile
 #**************************************************************************
 def init_0():
     H.write_resim_masses = True
+    H.mprefix[1] = f"u{os.getuid()}"
+    H.mprefix[2] = time.strftime("t%Y%m%d_%H%M%S", time.localtime())
 
     # initialize gravitationalsoftening 
     initgsoft_00()
 
     # initialize cosmological and technical parameters of the simulation
     init_cosmo_01()
+
+    print("Open inputfiles_HaloMaker.dat")
+    nlines = 0
+    with open('inputfiles_HaloMaker.dat', 'r') as f:
+        for line in f:
+            if line[0] == '#': continue
+            if line[0] == '!': continue
+            if (len(line.strip())==0): continue
+
+            nlines += 1
+    H.nsteps = nlines
+    print(f'> Number of snapshots to analyze =   {H.nsteps}')
 
     return
 
@@ -80,6 +94,7 @@ def init_cosmo_01():
 
     print('\n> Values of input parameters:  ')
     print('> ---------------------------- ')
+    print("")
     print(f'> Looking for `input_HaloMaker.dat` in directory: `{H.data_dir}`')
     f20 = open(f'input_HaloMaker.dat', 'r')
     for line in f20:
@@ -90,7 +105,7 @@ def init_cosmo_01():
         # check for a comment at end of line
         i     = value.find('!')
         if (i != -1): value = value[:i].strip()
-        print(f'> {name:>15} : {str(value):>10}')
+        print(f'>{name:>15} : {str(value):>10}')
         if (name == 'omega_0' or name == 'Omega_0' or name == 'omega_f'):
             H.omega_f = np.float64(value)
         elif (name == 'omega_l' or name == 'lambda_0' or name == 'lambda_f'):
@@ -142,7 +157,7 @@ def init_cosmo_01():
         elif (name == 'H.agor_file'):
             if(H.ANG_MOM_OF_R): H.agor_file = f"{H.data_dir}/{value}"
         else:
-            print(f'>   dont recognise parameter: {name}')
+            print(f'dont recognise parameter: {name}')
     f20.close()
     
     # initial size of the box in physical Mpc (NB: f index stands for final quantities)
@@ -161,15 +176,16 @@ def init_cosmo_01():
     H.omega_c_f = 1. - H.omega_f - H.omega_lambda_f
     H.H_i       = H.H_f * np.sqrt( H.omega_f*(H.af/H.ai)**3 + H.omega_c_f*(H.af/H.ai)**2 + H.omega_lambda_f)
     # rho_crit = 2.78782 h^2  (critical density in units of 10**11 M_sol/Mpc^3)
-    H.mboxp     = 2.78782*(H.Lf**3)*(H.H_f/100.)**2*H.omega_f 
+    H.mboxp     = np.float64(2.78782)*(H.Lf**3)*(H.H_f/100.)**2*H.omega_f 
 
     print()
     print( f'> Initial/Final values of parameters:  ')
     print( f'> -----------------------------------  ')
-    print( f'> redshift                         : ',H.af/H.ai-1.)
-    print( f'> box size (Mpc)                   : ',H.Lboxp)
-    print( f'> Hubble parameter  (km/s/Mpc)     : ',H.H_i)
-    print( f'> box mass (10^11 Msol)            : ',H.mboxp)
+    print("")
+    print( f' > redshift                         :   ',H.af/H.ai-1.)
+    print( f' > box size (Mpc)                   :   ',H.Lboxp)
+    print( f' > Hubble parameter  (km/s/Mpc)     :   ',H.H_i)
+    print( f' > box mass (10^11 Msol)            :   ',H.mboxp)
     print()
 
 #*************************************************************************
@@ -186,13 +202,13 @@ def new_step_1():
 # #ifdef H.ANG_MOM_OF_R
 #     character(200)                       :: filename
 # #endif
-    print(f'\n\n> Timestep  ---> {H.numero_step}')
+    print(f'\n\n> Timestep  --->    {H.numero_step}')
     print('> -------------------')
 
     read_time_ini = time.time()
 
     # read N-body info for this new step
-    print("\n $ Read data...")
+    print("\n\n\n $ Read data...", flush=True)
     read_data_10()
     if(H.nbodies<H.nMembers):
         print()
@@ -209,17 +225,17 @@ def new_step_1():
         return
 
     # determine the age of the universe and current values of cosmological parameters
-    print("\n $ Determine the Age...")
+    print("\n $ Determine the Age...", flush=True)
     det_age_11()
     
     # first compute the virial overdensity (with respect to the average density of the universe) 
     # predicted by the top-hat collapse model at this redshift 
-    print("\n $ Compute the virial overdensity...")
+    print("\n $ Compute the virial overdensity...", flush=True)
     virial_12()
 
+    print("\n $ Make halos...", flush=True)
     if(H.method!="FOF"):
        H.allocate('liste_parts',H.nbodies,dtype=np.int32)
-    print("\n $ Make halos...")
     make_halos_13()  
 
     if(H.Test_FOF):
@@ -244,7 +260,7 @@ def new_step_1():
     # until there are no more members (last particles points to -1)
     H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
 
-    print("\n $ Make linked list...")
+    print("\n $ Make linked list...", flush=True)
     make_linked_list_14()
 
     # H.deallocate liste_parts bc it has been replaced by linked_list_oo
@@ -355,14 +371,15 @@ def make_halos_13():
 
     print('> In routine make_halos ')
     print('> ----------------------')
+    print(f"> npart={H.npart}")
     
     print()
     H.fPeriod[:]    = H.FlagPeriod
     if(H.FlagPeriod==1):
-        print('> WARNING: Assuming PERIODIC boundary conditions --> make sure this is correct')
+        print('> WARNING: Assuming PERIODIC boundary conditions --> make sure this is correct', flush=True)
         periodic = True
     else:
-        print('> WARNING: Assuming NON PERIODIC boundary conditions --> make sure this is correct')
+        print('> WARNING: Assuming NON PERIODIC boundary conditions --> make sure this is correct', flush=True)
         periodic = False
     
     if(H.numero_step==1):
@@ -373,32 +390,32 @@ def make_halos_13():
 
         if(H.method == "FOF"):
             raise NotImplementedError('FOF is not implemented yet')
-            print('> HaloMaker is using Friend Of Friend algorithm')
+            print('> HaloMaker is using Friend Of Friend algorithm', flush=True)
             # fof_init()
             H.fsub = False
-        elif("HOP"):
+        elif(H.method == "HOP"):
             print('> HaloMaker is using Adaptahop in order to' )
-            print('> Detect halos, subhaloes will not be selected'    )
+            print('> Detect halos, and subhaloes will not be selected'    , flush=True)
             neiKDtree.init_adaptahop_130()
             H.fsub = False
-        elif("DPM"):
+        elif(H.method == "DPM"):
             print('> HaloMaker is using Adaptahop in order to' )
-            print('> Detect halos, and subhaloes with the Density Profile Method'    )
+            print('> Detect halos, and subhaloes with the Density Profile Method'    , flush=True)
             neiKDtree.init_adaptahop_130()
             H.fsub = True
-        elif("MSM"):
+        elif(H.method == "MSM"):
             print('> HaloMaker is using Adaptahop in order to' )
-            print('> Detect halos, and subhaloes with the Most massive Subhalo Method')
+            print('> Detect halos, and subhaloes with the Most massive Subhalo Method', flush=True)
             neiKDtree.init_adaptahop_130()
             H.fsub = True
-        elif("BHM"):
+        elif(H.method == "BHM"):
             print('> HaloMaker is using Adaptahop in order to' )
-            print('> Detect halos, and subhaloes with the Branch History Method'    )
+            print('> Detect halos, and subhaloes with the Branch History Method'    , flush=True)
             neiKDtree.init_adaptahop_130()
             H.fsub = True
         else:
             print('> Selection method: ',H.method,' is not included')
-            print('> Please check input file:, input_HaloMaker.dat')
+            print('> Please check input file:, input_HaloMaker.dat', flush=True)
     
     read_time_ini = time.time()
     if(H.method =='FOF'):
@@ -414,9 +431,9 @@ def make_halos_13():
 
     read_time_end = time.time()
 
-    print(' > Number of halos with more than     ', H.nMembers,' particles:',H.nb_of_halos)
-    print(' > Number of sub-halos with more than ', H.nMembers,' particles:',H.nb_of_subhalos)
-    print('> time_step computations took : ',round(read_time_end - read_time_ini),' seconds')
+    print('> Number of halos with more than     ', H.nMembers,' particles:',H.nb_of_halos)
+    print('> Number of sub-halos with more than ', H.nMembers,' particles:',H.nb_of_subhalos)
+    print('> time_step computations took : ',round(read_time_end - read_time_ini),' seconds', flush=True)
   
     return
 
@@ -697,10 +714,10 @@ def det_center_18(h:halo):
 
     if (icenter<0):
         print('> Could not find a center for halo: ',h.my_number,icenter)
-        print('  h.m,massp,h.m/massp             : ',h.m,H.massp,h.m/H.massp)
-        print('  Lbox_pt,distmin                 : ',H.Lbox_pt,distmin)
-        print('  pcx,pcy,pcz                  : ',pcx,pcy,pcz)
-        print('  periodicity flag                : ',H.FlagPeriod)
+        print(' h.m,massp,h.m/massp             : ',h.m,H.massp,h.m/H.massp)
+        print(' Lbox_pt,distmin                 : ',H.Lbox_pt,distmin)
+        print(' pcx,pcy,pcz                  : ',pcx,pcy,pcz)
+        print(' periodicity flag                : ',H.FlagPeriod)
         raise ValueError('> Check routine det_center')
 
     h.p.x  = mem['pos_10'][icenter,1]
@@ -1124,15 +1141,15 @@ def det_age_11():
     omm  = H.omega_f
     oml  = H.omega_lambda_f
     # age0 is the age of the universe @ the beginning of the simulation (in Gyr)
-    # somme0 = qromo(age_temps,(H.af/H.ai),10001,omm=omm,oml=oml)
-    func = partial(age_temps, oml=oml, omm=omm)
-    somme0 = integrate.quad(func, (H.af/H.ai), 10001)[0]
+    somme0 = qromo(age_temps,(H.af/H.ai),10001,omm=omm,oml=oml)
+    # func = partial(age_temps, oml=oml, omm=omm)
+    # somme0 = integrate.quad(func, (H.af/H.ai), 10001)[0]
     age0 = 977.78*somme0/H.H_f            
 
     # age1 is the time between the beginning of the simulation and the current timestep (in Gyr)
     if(H.aexp != H.ai):
-    #    somme1 = qromo(age_temps,(H.af/H.aexp),(H.af/H.ai),omm=omm,oml=oml)
-       somme1 = integrate.quad(func, (H.af/H.aexp), (H.af/H.ai))[0]
+       somme1 = qromo(age_temps,(H.af/H.aexp),(H.af/H.ai),omm=omm,oml=oml)
+    #    somme1 = integrate.quad(func, (H.af/H.aexp), (H.af/H.ai))[0]
     else:
        somme1 = 0.0
 
@@ -1171,7 +1188,7 @@ def virial_12():
     age       = H.age_univ/977.78*H.H_f
     # compute the overdensity needed to reach maximum expansion by half the age of the universe
     omega_maxexp = H.omega_f
-    collapse_120(age/2.0,omega_maxexp,1.e-6)
+    omega_maxexp = collapse_120(age/2.0,omega_maxexp,1.e-6)
     # calculate how far an object collapses to virial equilibrium
     eta = 2.0*H.omega_lambda_f/omega_maxexp*(H.af/H.aexp)**3
     if(eta == 0.0):
@@ -1183,6 +1200,8 @@ def virial_12():
     
     H.vir_overdens = omega_maxexp/H.omega_f/reduce**3*(H.aexp/H.af)**3
     H.rho_mean     = H.mboxp/H.Lbox_pt**3
+    print(f"> Virial overdensity             : {H.vir_overdens}")
+    print(f"> Mean density (1e11 M_sun/Mpc3) : {H.rho_mean}")
 
 
 #***********************************************************************
@@ -1215,19 +1234,29 @@ def collapse_120(age0,omm,acc):
     oml  = H.omega_lambda_f
     while( (abs(age-age0) > acc*age0)and((omax-omin) > acc*omm) ):
         omm = 0.5*(omax+omin)
+        
+        ### Replica of fortran subroutine `qromo`
+        ### (More consistent with previous implementation)
         # age_f = qromo(age_temps_turn_around,101,10001,omm=omm,oml=oml)
+        # age = qromo(age_temps_turn_around,1,101,omm=omm,oml=oml)
+        
+        ### Using scipy.integrate.quad
+        ### (More standard way of integration in Python)
         func = partial(age_temps_turn_around, oml=oml, omm=omm)
         age_f = integrate.quad(func, 101, 10001)[0]
-        # age = qromo(age_temps_turn_around,1,101,omm=omm,oml=oml)
         age = integrate.quad(func, 1, 101)[0]
+
+        # print(f"|        age_f={age_f}")#debug
+        # print(f"|        age  ={age}")#debug
         if(age+age_f > age0):
             omin = omm
         else:
             omax = omm
-
+    # print("-----------------------------")#debug
     if( (omax==omax0)or(omin==omin0) ):
         print('WARNING: presumed bounds for omega are inadequate in collapse.')
         print('WARNING: omax,omax0,omin,omin0=',omax,omax0,omin,omin0)
+    return omm
 
 #***********************************************************************
 def change_units_15():
@@ -1236,10 +1265,10 @@ def change_units_15():
     Mpc and from velocities in code units to peculiar (no Hubble flow) velocities 
     in km/s. masses are also changed from code units to 10^11 M_sun
     '''
-    mem['pos_10']   = mem['pos_10'] * H.Lbox_pt
-    if(type == 'SN'): mem['vel_10'] = mem['vel_10']*H.Hub_pt*H.Lbox_pt
+    mem['pos_10']   *= H.Lbox_pt
+    if(type == 'SN'): mem['vel_10'] *= H.Hub_pt*H.Lbox_pt
     massp = massp * H.mboxp
-    if (H.allocated('mass_10')): mem['mass_10']  = mem['mass_10'] * H.mboxp
+    if (H.allocated('mass_10')): mem['mass_10']  *= H.mboxp
 
 #***********************************************************************
 def det_halo_energies_1b3(h:halo, full_PE=1000):

@@ -310,17 +310,27 @@
 #                   use this method if you need to obtain an accurate merger tree 
 #                   containing subhaloes
 #=======================================================================
+from itertools import count
 import halo_defs as H
-from halo_defs import mem,frange
+from halo_defs import mem,frange,maccess, datdump, datload
 import numpy as np
+from tqdm import tqdm
+from num_rec import spline, icellid, icellids, counting_argsort_8
+from multiprocessing import Pool
+import time, os
+import faulthandler, signal, sys
 
 #   use halo_defs
 #   integer::ncall         #YDdebug
 ncall = 0
 ntest = 0
 inccell = 0
+ind_deepcount = 0
+switch = 0
 #   integer::icolor_select #YDdebug
 icolor_select = 0
+from collections import defaultdict
+timers = defaultdict(float)
 #   contains
 
 #=======================================================================
@@ -378,7 +388,7 @@ def list_parameters_1300():
     print(    'fudge           :',H.fudge)
     print(    'fudgepsilon     :',H.fudgepsilon)
     print(    'Selection method:',' ',H.method)
-    print('============================================================')
+    print('============================================================', flush=True)
 
 
 #=======================================================================
@@ -413,12 +423,13 @@ def change_pos_1310():
 #=======================================================================
     H.npart    = H.nbodies
     H.epsilon  = H.fudgepsilon*H.xlong/H.npart**(1/3)
-    mem['pos_10']      = mem['pos_10'] * H.boxsize2
+    # mem['pos_10']      = mem['pos_10'] * H.boxsize2
+    mem['pos_10']      *= H.boxsize2
 
 #=======================================================================
 def change_pos_back_1315():
 #=======================================================================
-    mem['pos_10'] = mem['pos_10'] / H.boxsize2
+    mem['pos_10'] /= H.boxsize2
 
 #=======================================================================
 def count_halos_1316():
@@ -485,7 +496,7 @@ def select_with_MS_method_1319(mass_acc = 1.0e-2):
             H.node_0[inode1].truemass -= H.node_0[isub1].truemass
             isub1 = H.node_0[isub1].sister
         if(H.node_0[inode1].mass<=0 or H.node_0[inode1].truemass<=0.0):
-            print(' Error in computing H.node_0',inode1,'mass_10')
+            print('Error in computing H.node_0',inode1,'mass_10')
             raise ValueError(' mass, truemass:', H.node_0[inode1].mass, H.node_0[inode1].truemass)
     if(H.verbose):
         # check that the new masses are correct
@@ -670,10 +681,6 @@ def make_linked_node_list():
 #=======================================================================
 def compute_mean_density_and_np_1312():
 #=======================================================================
-    # integer(kind=4)                     :: ipar
-    # real(kind=8), dimension(0:H.nvoisins) :: dist2_0
-    # integer, dimension(H.nvoisins)        :: iparnei
-    # real(kind=8)                        :: densav
     dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
     iparnei = np.empty(H.nvoisins, dtype=np.int32)
 
@@ -687,7 +694,9 @@ def compute_mean_density_and_np_1312():
     # !$OMP PARALLEL DO &
     # !$OMP DEFAULT(SHARED) &
     # !$OMP PRIVATE(ipar,dist2_0,iparnei)
-    for ipar1 in frange(1,H.npart):
+    iterator = tqdm(frange(1,H.npart))
+    #for ipar1 in frange(1,H.npart):
+    for ipar1 in iterator:
         dist2_0, iparnei = find_nearest_parts_13120(ipar1,dist2_0,iparnei)
         compute_density_13121(ipar1,dist2_0,iparnei)
         mem['iparneigh_1312'][:H.nhop,ipar1-1]=iparnei[:H.nhop]
@@ -695,9 +704,10 @@ def compute_mean_density_and_np_1312():
 
     # Check for average density
     if (H.verbose):
-        densav=0
-        for ipar1 in frange(1,H.npart):
-            densav=(densav*(ipar1-1)+mem['density_1312'][ipar1-1])/ipar1
+        densav = mem['density_1312'].mean()
+        #densav=0
+        #for ipar1 in frange(1,H.npart):
+        #    densav=(densav*(ipar1-1)+mem['density_1312'][ipar1-1])/ipar1
         print('Average density :',densav)
     
     H.deallocate('mass_cell_1311')
@@ -736,7 +746,7 @@ def find_local_maxima_1313():
             mem['idpart_1311'][ipar1-1]=-H.ngroups
         else:
             mem['idpart_1311'][ipar1-1]=iparsel1
-    
+
     if (H.verbose): print('Number of local maxima found :',H.ngroups)
 
     # Now Link the particles associated to the same maximum
@@ -841,7 +851,7 @@ def create_group_tree_1314():
     H.deallocate('igroupid_1314')
     H.deallocate('idgroup_tmp_1314')
     H.deallocate('idpart_1311')
-    H.deallocate('group')
+    # H.deallocate('group')
     H.deallocate('densityg_1313')
     H.deallocate('firstpart_1313')
  
@@ -1117,7 +1127,8 @@ def treat_particles_13141(igroup1,rhot,igroupref,posref,imass,truemass,rsquare,d
 
             iparold=ipar1
             imass += 1
-            xmasspart = mem['mass_10'][ipar1-1] if(H.allocated('mass_10')) else H.massp
+            #xmasspart = mem['mass_10'][ipar1-1] if(H.allocated('mass_10')) else H.massp
+            xmasspart = mem['mass_10'][ipar1-1] if(H.massalloc) else H.massp
             truemass += xmasspart
             posdiffx=mem['pos_10'][ipar1-1,0]-posref[0]
             posdiffy=mem['pos_10'][ipar1-1,1]-posref[1]
@@ -1352,53 +1363,41 @@ def compute_saddle_list_13140():
 #=======================================================================
 def compute_density_13121(ipar1,dist2_0,iparnei):
 #=======================================================================
-    # real(kind=8)          :: dist2_0(0:H.nvoisins)
-    # integer(kind=4)       :: iparnei(H.nvoisins)
-    # real(kind=8)          :: r,unsr,contrib
-    # real(kind=8),external :: spline
-    # integer(kind=4)       :: idist,ipar1
-
-    from num_rec import spline
-
     r=np.sqrt(dist2_0[H.nvoisins])*0.5
     unsr=1./r
     contrib=0.
+    if H.massalloc:
+        memmass = mem['mass_10']
     for idist0 in range(H.nvoisins-1):
-        if(H.allocated('mass_10')):
-            contrib += mem['mass_10'][iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
+        #if(H.allocated('mass_10')):
+        if(H.massalloc):
+            contrib += memmass[iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
         else:
             contrib += H.massp*spline(np.sqrt(dist2_0[idist0+1])*unsr)
     # Add the contribution of the particle itself and normalize properly
     # to get a density with average unity (if computed on an uniform grid)
     # note that this assumes that the total mass in the box is normalized to 1.
-    if(H.allocated('mass_10')):
-        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+mem['mass_10'][ipar1-1]) /(H.pi*r**3)
+    #if(H.allocated('mass_10')):
+    if(H.massalloc):
+        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+memmass[ipar1-1]) /(H.pi*r**3)
     else:
         mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib + H.massp) /(H.pi*r**3)
 
 #=======================================================================
 def find_nearest_parts_13120(ipar1,dist2_0,iparnei):
 #=======================================================================
-    # integer(kind=4) :: ipar1,idist,icell_identity,inccellpart
-    # real(kind=8)    :: dist2_0(0:H.nvoisins)
-    # integer(kind=4) :: iparnei(H.nvoisins)
-    # real(kind=8)    :: poshere(1:3)
-    poshere = np.zeros(3, dtype=np.float64)
-
-    poshere[:3]=mem['pos_10'][ipar1-1,:3]
-    dist2_0[0]=0.
-    dist2_0[1:] = H.bignum
-    # for idist0 in range(H.nvoisins):
-    #     dist2_0[idist0+1]=H.bignum
+    #poshere = np.empty(3, dtype=np.float64)
+    #poshere[:]=mem['pos_10'][ipar1-1]
+    poshere = mem['pos_10'][ipar1-1].view()
+    #dist2_0[0]=0.
+    #dist2_0[1:] = H.bignum
+    dist2_0.fill(H.bignum); dist2_0[0]=0.0
     icell_identity1 =1
-    # inccellpart    =0
-    # walk_tree(icell_identity1,poshere,dist2_0,ipar1,inccellpart,iparnei)
     dist2_0, iparnei = walk_tree_131200(icell_identity1,poshere,dist2_0,ipar1,iparnei)
     return dist2_0, iparnei
 
 
 #=======================================================================
-# def walk_tree(icellidin1,poshere,dist2_0, iparid,inccellpart,iparnei):
 def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
 #=======================================================================
     '''
@@ -1411,19 +1410,8 @@ def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
     
     - by ChatGPT Jan 9
     '''
-    # integer(kind=4) :: icellidin1,icell_identity,iparid1,inccellpart,ic,iparcell
-    # real(kind=8)    :: poshere[2],dist2_0(0:H.nvoisins)
-    # real(kind=8)    :: dx,dy,dz,distance2,sc
-    # integer(kind=4) :: idist,inc
-    # integer(kind=4) :: icellid_out
-    # real(kind=8)    :: discell2_0(0:8)
     discell2_0 = np.zeros(9, dtype=np.float64)
-    # integer(kind=4) :: iparnei(H.nvoisins)
-    # integer(kind=4) :: icid(8)
     icid = np.zeros(8, dtype=np.int32)
-
-    # integer(kind=4) :: i,first_pos_this_node
-    # real(kind=8)    :: distance2p
 
     icell_identity1 = mem['firstchild_1311'][icellidin1-1]
     inc=1
@@ -1485,54 +1473,499 @@ def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
 #=======================================================================
 def create_tree_structure_1311():
 #=======================================================================
-    # integer(kind=4) :: nlevel,inccell,idmother,ipar
-    # integer(kind=4) :: npart_this_node,first_pos_this_node
-    # integer(kind=4) :: ncell
-    # real(kind=8)    :: pos_this_node(3)
-    global inccell
+    global inccell, timers
     pos_this_node = np.empty(3, dtype=np.float64)
 
     if (H.verbose): print('Create tree structure...')
 
     # we modified to put 2*H.npart-1 instead of 2*H.npart so that AdaptaHOP can work on a 1024^3, 2*(1024^3)-1 is still an integer(kind=4), 2*(1024^3) is not 
-    H.ncellmx=2*H.npart -1
+    H.ncellmx=int( (2*H.npart -1)/H.nvoisins*4 )
     H.ncellbuffer=max(round(0.1*H.npart),H.ncellbuffermin)
     H.allocate('idpart_1311',H.npart, dtype=np.int32)
-    # H.allocate('idpart_tmp_1311',H.npart, dtype=np.int32)
     H.allocate('mass_cell_1311',H.ncellmx, dtype=np.int32)
     H.allocate('size_cell_1311',H.ncellmx, dtype=np.float64)
     H.allocate('pos_cell_1311',(3,H.ncellmx), dtype=np.float64)
     H.allocate('sister_1311',H.ncellmx, dtype=np.int32)
     H.allocate('firstchild_1311',H.ncellmx, dtype=np.int32)
-    
+
+    # # -----------------------------------------------------
+    # # [ORIGINAL RECURSIVE MODE]    
+    # mem['idpart_1311'][:] = np.arange(H.npart, dtype=np.int32)+1
+
+    # nlevel=0
+    # inccell=0
+    # idmother=0
+    # pos_this_node[:]=np.float64(0.)
+    # npart_this_node=H.npart
+    # first_pos_this_node=0
+    # mem['pos_cell_1311'][:]=0
+    # mem['size_cell_1311'][:]=0
+    # mem['mass_cell_1311'][:]=0
+    # mem['sister_1311'][:]=0
+    # mem['firstchild_1311'][:]=0
+    # H.sizeroot = np.float64( np.max([H.xlong,H.ylong,H.zlong]) )
+
+    # print("[create_tree_structure]")
+    # print("[create_tree_structure]")
+    # print("[create_tree_structure]")
+    # print("[create_tree_structure]")
+    # ref = time.time()
+    # create_KDtree_13110(
+    #     nlevel,
+    #     pos_this_node,
+    #     npart_this_node,
+    #     # inccell,
+    #     first_pos_this_node,
+    #     idmother)
+    # ncell=inccell
+    # if (H.verbose): print('total number of cells =',ncell)
+    # print(time.time()-ref, " seconds to create the tree structure")
+    # # -----------------------------------------------------
+
+    # -----------------------------------------------------
+    # [ITERATIVE MODE]
     mem['idpart_1311'][:] = np.arange(H.npart, dtype=np.int32)+1
 
     nlevel=0
     inccell=0
     idmother=0
-    pos_this_node[:]=0.
+    pos_this_node[:]=np.float64(0.)
     npart_this_node=H.npart
     first_pos_this_node=0
-    # mem['idpart_tmp_1311'][:]=0
     mem['pos_cell_1311'][:]=0
     mem['size_cell_1311'][:]=0
     mem['mass_cell_1311'][:]=0
     mem['sister_1311'][:]=0
     mem['firstchild_1311'][:]=0
-    H.sizeroot = np.double( np.max([H.xlong,H.ylong,H.zlong]) )
+    H.sizeroot = np.float64( np.max([H.xlong,H.ylong,H.zlong]) )
 
-    create_KDtree_13110(nlevel,pos_this_node, npart_this_node,first_pos_this_node, idmother)
-    ncell=inccell
+    print("[create_tree_structure]")
+    print("[create_tree_structure]")
+    print("[create_tree_structure]")
+    print("[create_tree_structure]")
+    ref = time.time()
 
+    # -------------------------------------------------------
+    # Calculate root cells (<= baselevel) first
+    # -------------------------------------------------------
+    baselevel = min(int(np.ceil(np.log2(H.nbPes)/3)), 3) + 1
+    tmp = 8**np.arange(baselevel+1)
+    nchunk = 8**baselevel
+    nrootcells = np.sum(tmp)
+    print(f"Base level = {baselevel} ({nchunk} cells) for {H.nbPes} PEs")
+    H.allocate('rmass_cell_1311',nrootcells, dtype=np.int32)
+    H.allocate('rsize_cell_1311',nrootcells, dtype=np.float64)
+    H.allocate('rpos_cell_1311',(3,nrootcells), dtype=np.float64)
+    H.allocate('rsister_1311',nrootcells, dtype=np.int32)
+    H.allocate('rfirstchild_1311',nrootcells, dtype=np.int32)
+    mem['rpos_cell_1311'][:]=0
+    mem['rsize_cell_1311'][:]=0
+    mem['rmass_cell_1311'][:]=0
+    mem['rsister_1311'][:]=0
+    mem['rfirstchild_1311'][:]=0
+    stack_chunks, npartchunks = create_KDtree_root(baselevel=baselevel)
+    print(f"Root builds {np.sum(tmp)} cells ({[int(t) for t in tmp]})")
+    print(f"Nparts per chunk: {npartchunks.min()}-{npartchunks.max()} (total {npartchunks.sum()})")
+
+    nroot_counts = np.zeros(nchunk, dtype=np.int32)
+    for ilvl in range(baselevel+1):
+        tmp = np.arange(0, nchunk, 8**(baselevel-ilvl))
+        nroot_counts[tmp] += 1
+    nroot_cumsum = np.cumsum(nroot_counts)
+
+    # -------------------------------------------------------
+    # Calculate sons of root cells in parallel
+    # -------------------------------------------------------
+    H.allocate('ncell_chunks_1311',nchunk, dtype=np.int32)
+    if H.nbPes == 1: # Single process
+        iterator = tqdm(range(nchunk), desc=f"[Ncpu=1] Creating KD-tree chunks")
+        for ichunk in iterator:
+            _create_KDtree_worker(ichunk, stack_chunks[ichunk], inccell)
+    else: # Multi processes
+        pbar = tqdm(total=nchunk, desc=f"[Ncpu={H.nbPes}] Creating KD-tree chunks")
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with Pool(processes=H.nbPes) as pool:
+            async_results = []
+            for icpu1 in range(nchunk):
+                r = pool.apply_async(_create_KDtree_worker, args=(icpu1, stack_chunks[icpu1], inccell), callback=lambda _: pbar.update())
+                async_results.append(r)
+            for r in async_results:
+                r.get()
+        signal.signal(signal.SIGTERM, H.flush)
+        
+    # -------------------------------------------------------
+    # Rearrange
+    # -------------------------------------------------------
+    ncell_chunks = mem['ncell_chunks_1311']
+    inccell += np.sum(ncell_chunks)
+    ncell_cumul = np.cumsum(ncell_chunks)
+    _ncell_cumul = np.insert(ncell_cumul, 0, 0)
+    insert_starts = _ncell_cumul[:-1] + nroot_cumsum
+    _nroot_cumsum = np.insert(nroot_cumsum, 0, 0)
+    insert_ends   = _nroot_cumsum[1:]  + ncell_cumul
+    nroot_remains = nrootcells - nroot_cumsum
+    # shift_ends    = insert_starts + nroot_remains
+    root_index = np.arange(nrootcells) + np.repeat(_ncell_cumul[:-1], nroot_counts)
+    # root_index_old = np.arange(nrootcells)
+    
+
+    # -------------------------------------------------------
+    # Gathering <-------- Need for multi-process!!!!!!!!!!
+    # -------------------------------------------------------
+    cellkeys = [('mass_cell', 'i4'), ('size_cell', 'f8'),
+                ('pos_cell', 'f8'), ('sister', 'i4'),
+                ('firstchild', 'i4')]
+    if H.nbPes == 1: # Single process
+        iterator = tqdm(range(nchunk), desc=f"[Ncpu=1] Gathering KD-tree chunks")
+        for ichunk in iterator:
+            willbe_shifted = nroot_cumsum[ichunk]
+            nroot_remain = nroot_remains[ichunk]
+            insert_start = insert_starts[ichunk]
+            insert_end   = insert_ends[ichunk]
+            ncell_ichunk = ncell_chunks[ichunk]
+            ncell_allchunk = ncell_cumul[ichunk]
+            iroot1 = _nroot_cumsum[ichunk]
+            iroot2 = _nroot_cumsum[ichunk+1]
+            _gather_KDtree_worker(
+            ichunk,
+            willbe_shifted, nroot_remain, insert_start, insert_end,
+            ncell_ichunk, ncell_allchunk, iroot1, iroot2,
+            root_index, cellkeys, nroot_counts
+            )
+    else: # Multi processes
+        pbar = tqdm(total=nchunk, desc=f"[Ncpu={H.nbPes}] Gathering KD-tree chunks")
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with Pool(processes=H.nbPes) as pool:
+            async_results = []
+            for ichunk in range(nchunk):
+                willbe_shifted = nroot_cumsum[ichunk]
+                nroot_remain = nroot_remains[ichunk]
+                insert_start = insert_starts[ichunk]
+                insert_end   = insert_ends[ichunk]
+                ncell_ichunk = ncell_chunks[ichunk]
+                ncell_allchunk = ncell_cumul[ichunk]
+                iroot1 = _nroot_cumsum[ichunk]
+                iroot2 = _nroot_cumsum[ichunk+1]
+                r = pool.apply_async(
+                    _gather_KDtree_worker,
+                    args=(
+                        ichunk,
+                        willbe_shifted, nroot_remain, insert_start, insert_end,
+                        ncell_ichunk, ncell_allchunk, iroot1, iroot2,
+                        root_index, cellkeys, nroot_counts
+                    ),
+                    callback=lambda _: pbar.update()
+                )
+                async_results.append(r)
+            for r in async_results:
+                r.get()
+        signal.signal(signal.SIGTERM, H.flush)
+
+    # Change root (0 <= lvl < baselvl) firstchild
+    firstchild = mem["firstchild_1311"]
+    sizezero = H.sizeroot/2
+    lvls = np.int32(np.log2(sizezero / mem['size_cell_1311'][root_index]))
+    mask = lvls < baselevel
+    need_to_change = root_index[mask]
+    for idx in need_to_change:
+        old_fc = firstchild[idx]
+        new_fc = root_index[old_fc -1]+1  # -1 for Fortran->C index
+        firstchild[idx] = new_fc
+
+    # Change sister sign
+    sister_1311 = mem["sister_1311"]
+    sister_1311 = np.where(sister_1311 < 0, -sister_1311, sister_1311)
+    mem["sister_1311"] = sister_1311
+
+    ncell = inccell
     if (H.verbose): print('total number of cells =',ncell)
+    print(time.time()-ref, " seconds to create the tree structure")
 
-    # H.deallocate('idpart_tmp_1311')
+    H.deallocate('rmass_cell_1311', 'rsize_cell_1311', 'rpos_cell_1311',
+                 'rsister_1311', 'rfirstchild_1311', 'ncell_chunks_1311')
+
     raise ValueError("stop")
+    # -----------------------------------------------------
+
+def _create_KDtree_worker(icpu, stack, inccell_root):
+    pos_ref_0 = H.pos_ref_0
+
+    idpart_1311      = maccess('idpart_1311')#mem['idpart_1311']
+    pos_10           = maccess('pos_10')
+    
+    ncellmx=int( (2*H.npart -1)/H.nvoisins )
+    pos_cell   = np.empty((3,ncellmx), dtype=np.float64)
+    mass_cell  = np.empty(ncellmx, dtype=np.int32)
+    size_cell  = np.empty(ncellmx, dtype=np.float64)
+    sister     = np.zeros(ncellmx, dtype=np.int32)
+    firstchild = np.zeros(ncellmx, dtype=np.int32)
+
+    pos_cell[:, :inccell_root] = mem['rpos_cell_1311']
+    mass_cell[:inccell_root]   = mem['rmass_cell_1311']
+    size_cell[:inccell_root]   = mem['rsize_cell_1311']
+    sister[:inccell_root]      = mem['rsister_1311']
+    firstchild[:inccell_root]  = mem['rfirstchild_1311']
+
+    sizeroot     = H.sizeroot
+    npartpercell = H.npartpercell
+    nlevelmax    = H.nlevelmax
+
+    _inccell = inccell_root
+    while stack:
+        nlevel, pos_this_node, npart_this_node, first_pos_this_node, idmother = stack.pop()
+
+        # Stop refinement due to no particle in leaf cell
+        if npart_this_node <= 0:
+            continue
+
+        # ---------------- Enter node / allocate cell id ----------------
+        _inccell += 1
+        # ---------------- Increase Array -------------------
+        if _inccell > ncellmx:
+            ncellmx_old = ncellmx
+            ncellmx += H.ncellbuffer
+            
+            new_shape = (ncellmx,)
+            tmp = np.zeros(ncellmx_old, dtype=np.int32); old_shape = tmp.shape
+            tmp[:] = mass_cell[:]
+            mass_cell = np.empty(new_shape, dtype=np.int32)
+            mass_cell[:old_shape[0]] = tmp[:]
+            tmp[:] = sister[:]
+            sister = np.zeros(new_shape, dtype=np.int32)
+            sister[:old_shape[0]] = tmp[:]
+            tmp[:] = firstchild[:]
+            firstchild = np.zeros(new_shape, dtype=np.int32)
+            firstchild[:old_shape[0]] = tmp[:]
+            del tmp
+
+            tmp = np.zeros(ncellmx_old, dtype=np.float64)
+            size_cell = np.empty(new_shape, dtype=np.float64)
+            size_cell[:old_shape[0]] = tmp[:]
+            del tmp
+
+            tmp = np.zeros((3, ncellmx_old), dtype=np.float64)
+            pos_cell = np.empty((3, ncellmx), dtype=np.float64)
+            pos_cell[:, :old_shape[1]] = tmp[:, :]
+            del tmp
+        # ---------------------------------------------------
+
+        # meta write
+        pos_cell[:3, _inccell-1] = pos_this_node
+        mass_cell[_inccell-1] = npart_this_node
+        size_cell[_inccell-1] = (2.0 ** (-nlevel)) * sizeroot * 0.5
+
+        # link to mother
+        if idmother > 0:
+            sister[_inccell-1] = firstchild[idmother-1]
+            firstchild[idmother-1] = _inccell # <--------could be race condition
+        else:
+            pass
+
+        # leaf condition
+        if (npart_this_node <= npartpercell) or (nlevel == nlevelmax):
+            firstchild[_inccell-1] = -(first_pos_this_node + 1)
+            continue
+
+        # ---------------- Split / sort within this node ----------------
+        # Count the number of particles in each subcell of this node
+        idpart1s = idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node].view()
+
+        # gather positions then compute icids
+        tmp = np.take(pos_10, idpart1s - 1, axis=0)
+        icids = icellids(tmp, pos_this_node=pos_this_node, mode=1)
+        incsubcell_0 = np.bincount(icids, minlength=8).astype(np.int32)
+        nsubcell_0 = np.empty(8, dtype=np.int32)
+        nsubcell_0[0] = 0
+        nsubcell_0[1:] = np.cumsum(incsubcell_0[:-1])
+        argsort = np.argsort(icids, kind='mergesort')
+
+        idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node] = idpart1s[argsort]
+
+        # ---------------- Push children (reverse order for same traversal) ----------------
+        idmother_out = _inccell
+        scale = sizeroot * (2.0 ** (-nlevel - 2))
+
+        # push j0=7..0 so that pop() processes 0..7 like recursive loop
+        for j0 in range(7, -1, -1):
+            npart_this_node_out = int(incsubcell_0[j0])
+            if npart_this_node_out <= 0:
+                continue
+            first_pos_this_node_out = int(first_pos_this_node + nsubcell_0[j0])
+            pos_this_node_out = pos_this_node[:3] + (pos_ref_0[:3, j0] * scale)
+            # ioct = oct(int(myoct,8)*8 + j0)
+            stack.append((
+                nlevel + 1,
+                pos_this_node_out,
+                npart_this_node_out,
+                first_pos_this_node_out,
+                idmother_out
+            ))
+
+    # Dump
+    datdump(pos_cell[:, inccell_root:_inccell], f'pos_cell_i{icpu:04d}.tmp')
+    datdump(mass_cell[inccell_root:_inccell], f'mass_cell_i{icpu:04d}.tmp')
+    datdump(size_cell[inccell_root:_inccell], f'size_cell_i{icpu:04d}.tmp')
+    datdump(sister[inccell_root:_inccell], f'sister_i{icpu:04d}.tmp')
+    datdump(firstchild[inccell_root:_inccell], f'firstchild_i{icpu:04d}.tmp')
+    datdump(firstchild[:inccell_root], f'firstchild_r{icpu:04d}.tmp')
+
+    ncell_ichunk = _inccell - inccell_root
+    ncell_chunks_1311 = maccess('ncell_chunks_1311')
+    ncell_chunks_1311[icpu] = ncell_ichunk
+
+def _gather_KDtree_worker(
+        # variables
+        ichunk,
+        willbe_shifted, nroot_remain, insert_start, insert_end,
+        ncell_ichunk, ncell_allchunk, iroot1, iroot2,
+        # static
+        root_index, cellkeys, nroot_counts
+        ):
+    for key, dtype in cellkeys:
+        # Shift root cells      
+        _root = mem[f"r{key}_1311"][...,iroot1:iroot2]
+        if ('sister' in key):
+            _rootold = _root.copy()
+            _root = np.where(_rootold > 0, root_index[_rootold-1]+1, _rootold)
+        mem[f"{key}_1311"][..., insert_start-nroot_counts[ichunk]:insert_start] = _root
+
+        # Insert chunk cells
+        fname = f"{key}_i{ichunk:04d}.tmp"
+        arr = datload(fname, dtype=dtype)
+        if 'pos' in key: arr = arr.reshape(3,-1)
+        if key == 'firstchild':
+            # Correct firstchild indices of chunks
+            arr = arr.copy()
+            arr[arr > 0] += ncell_allchunk - ncell_ichunk - nroot_remain
+        if key=='sister':
+            # Correct sister indices of chunks
+            arr = arr.copy()
+            arr[arr > nroot_remain] += ncell_allchunk - ncell_ichunk - nroot_remain
+            arr *= -1
+        mem[f"{key}_1311"][..., insert_start:insert_end] = arr
+        os.remove(fname)
+
+    # Modify firstchild of {ichunk}th Root (lvl=baselevel)
+    rname = f"firstchild_r{ichunk:04d}.tmp"
+    rarr = datload(f"firstchild_r{ichunk:04d}.tmp", dtype=dtype)
+    our_mothder = rarr[willbe_shifted-1]
+    mem[f"firstchild_1311"][root_index[willbe_shifted-1]] = our_mothder + ncell_allchunk - ncell_ichunk - nroot_remain
+    os.remove(rname)
+
+def create_KDtree_root(baselevel=0):
+    global inccell
+    stacks = []
+    chunks = [[] for _ in range(8**baselevel)]
+    npartchunks = [np.int32(0) for _ in range(8**baselevel)]
+    ichunk = 0
+
+    pos_ref_0 = H.pos_ref_0
+
+    # Level 0 Root cell
+    nlevel=0
+    idmother=0
+    pos_this_node=np.zeros(3, dtype=np.float64)
+    npart_this_node=H.npart
+    first_pos_this_node=0
+
+    # local refs to avoid repeated dict lookups
+    idpart_1311      = mem['idpart_1311']
+    pos_10           = mem['pos_10']
+    pos_cell_1311    = mem['rpos_cell_1311']
+    mass_cell_1311   = mem['rmass_cell_1311']
+    size_cell_1311   = mem['rsize_cell_1311']
+    sister_1311      = mem['rsister_1311']
+    firstchild_1311  = mem['rfirstchild_1311']
+    
+    sizeroot     = H.sizeroot
+    npartpercell = H.npartpercell
+    nlevelmax    = H.nlevelmax
+
+    # ioct = oct(1)
+    stacks.append( (nlevel, pos_this_node.copy(), npart_this_node, first_pos_this_node, idmother) )
+
+    tmp = 8**np.arange(baselevel+1)
+    nrootcells = np.sum(tmp)
+    pbar = tqdm(total=nrootcells, desc="Creating KD-tree root")
+
+    # for ilvl in range(baselevel+1):
+    while stacks:
+        nlevel, pos_this_node, npart_this_node, first_pos_this_node, idmother = stacks.pop()
+        ilvl = nlevel
+        inccell += 1
+        pos_cell_1311[:3, inccell-1] = pos_this_node
+        mass_cell_1311[inccell-1] = npart_this_node
+        size_cell_1311[inccell-1] = (2.0 ** (-nlevel)) * sizeroot * 0.5
+    
+        # link to mother
+        if idmother > 0:
+            sister_1311[inccell-1] = firstchild_1311[idmother-1]
+            firstchild_1311[idmother-1] = inccell
+        else:
+            pass
+
+        # leaf condition
+        if (npart_this_node <= npartpercell):
+            firstchild_1311[inccell-1] = -(first_pos_this_node + 1)
+            continue
+
+        # ---------------- Split / sort within this node ----------------
+        # Count the number of particles in each subcell of this node
+        idpart1s = idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node].view()
+
+        # gather positions then compute icids
+        icids = icellids(np.take(pos_10, idpart1s - 1, axis=0), pos_this_node=pos_this_node, mode=1)
+        incsubcell_0 = np.bincount(icids, minlength=8).astype(np.int32)
+
+        nsubcell_0 = np.empty(8, dtype=np.int32); nsubcell_0[0] = 0
+        nsubcell_0[1:] = np.cumsum(incsubcell_0[:-1])
+
+        idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node] = idpart1s[np.argsort(icids, kind='mergesort')]
+
+        # ---------------- Push children (reverse order for same traversal) ----------------
+        idmother_out = inccell
+        scale = sizeroot * (2.0 ** (-nlevel - 2))
+
+        # push j0=7..0 so that pop() processes 0..7 like recursive loop
+        for j0 in range(7, -1, -1):
+            npart_this_node_out = int(incsubcell_0[j0])
+            if npart_this_node_out <= 0:
+                continue
+            first_pos_this_node_out = int(first_pos_this_node + nsubcell_0[j0])
+            pos_this_node_out = pos_this_node[:3] + (pos_ref_0[:3, j0] * scale)
+            # ioct = oct(int(myoct,8)*8 + j0)
+            if ilvl < baselevel:
+                stacks.append((
+                    nlevel + 1,
+                    pos_this_node_out,
+                    npart_this_node_out,
+                    first_pos_this_node_out,
+                    idmother_out,
+                ))
+            else:
+                chunks[ichunk].append((
+                    nlevel + 1,
+                    pos_this_node_out,
+                    npart_this_node_out,
+                    first_pos_this_node_out,
+                    idmother_out,
+                ))
+        if ilvl == baselevel:
+            npartchunks[ichunk] = np.sum(incsubcell_0)
+            ichunk += 1
+        pbar.update(1)
+                
+    return chunks, np.asarray(npartchunks, dtype=np.int32)
 
 
-from multiprocessing import Pool
 #=======================================================================
-def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npart_this_node, first_pos_this_node,idmother,pos_ref_0=None):
+def create_KDtree_13110(
+        nlevel:np.int32,
+        pos_this_node:np.ndarray[np.float64],
+        npart_this_node, 
+        first_pos_this_node,
+        idmother,
+        pos_ref_0=None):
 #=======================================================================
 #  nlevel : level of the H.node_0 in the octree. Level zero corresponds to 
 #           the full box
@@ -1541,8 +1974,6 @@ def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npa
 #  idpart : array of dimension H.npart containing the id of each
 #           particle. It is sorted such that neighboring particles in
 #           this array belong to the same cell H.node_0.
-#  idpart_tmp : temporary array of same size used as a buffer to sort
-#           idpart.
 #  npart_this_node : number of particles in the considered H.node_0
 #  first_pos_this_node : first position in idpart of the particles 
 #           belonging to this H.node_0
@@ -1564,10 +1995,9 @@ def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npa
 #  ncellmx : maximum number of cells
 #  H.megaverbose : detailed H.verbose mode
 #=======================================================================
-    global inccell
-    print(f"[create_KDtree] nlevel={nlevel}, pos_this_node={pos_this_node}, npart_this_node={npart_this_node}, inccell={inccell}")
-    # integer(kind=4)           :: nlevel,first_pos_this_node,npart_this_node
-    # real(kind=8)              :: pos_ref_0(3,0:7)
+    ref = time.time()
+    global inccell, timers, switch
+    
     if(pos_ref_0 is None):
         pos_ref_0 = np.array([-1., -1., -1.,
                              1., -1., -1.,
@@ -1578,183 +2008,108 @@ def create_KDtree_13110(nlevel:np.int32,pos_this_node:np.ndarray[np.float64],npa
                             -1.,  1.,  1.,
                              1.,  1.,  1.], dtype=np.float64)
         pos_ref_0 = pos_ref_0.reshape((3, 8), order='F')  # 'F' for Fortran-style ordering
-    # real(kind=8)              :: pos_this_node(3)   
-    # integer(kind=4)           :: ipar,icid,j,inccell,nlevel_out
-    # integer(kind=4), external :: icellid
-    from num_rec import icellid, icellids
-    import time
-    # integer(kind=4)           :: first_pos_this_node_out,npart_this_node_out
-    # integer(kind=4)           :: incsubcell_0(0:7),nsubcell_0(0:7)
-    timereport = []; icount=1
-    ref = time.time()
-    incsubcell_0 = np.zeros(8, dtype=np.int32)
-    nsubcell_0 = np.zeros(8, dtype=np.int32)
-    # real(kind=8)              :: xtest(3),pos_this_node_out(3)
-    # xtest = np.empty(3, dtype=np.float64)
-    # pos_this_node_out = np.empty(3, dtype=np.float64)
-    timereport.append((f'{icount} init', time.time()-ref)); ref = time.time(); icount+=1
-    # integer(kind=4)           :: idmother,idmother_out
+        timers[-1] += time.time() - ref; ref = time.time()
 
-    # integer(kind=8)           :: ncellmx_old
-    # integer, allocatable      :: mass_cell_tmp(:),sister_tmp(:),firstchild_tmp(:)
-    # real(kind=8), allocatable :: size_cell_tmp(:),pos_cell_tmp(:,:)
-
-    #  pos_ref_0 : an array used to find positions of the 8 subcells in this
-    #           H.node_0.
-
+    header=0; stage=0
     if (npart_this_node>0):
         inccell += 1
-        if ( ((inccell%1000000)==0)and(H.megaverbose) ): print('inccell=',inccell)
+        if ( ((inccell%1000000)==0)and(H.megaverbose) ):
+            print('inccell=',inccell)
+        timers[-1] += time.time() - ref; ref = time.time()
+        
+        # ---------------- Increase Array -------------------
         if (inccell>H.ncellmx):
             # If we have reached the maximum number of cells, we increase
             # the size of the arrays and reallocate them
             ncellmx_old=H.ncellmx
             H.ncellmx += H.ncellbuffer
-            if(H.megaverbose): print(f'ncellmx{ncellmx_old} is too small. Increase(+{H.ncellbuffer}) it and reallocate arrays accordingly')
+            if(H.megaverbose):
+                print(f'ncellmx({ncellmx_old}) is too small. Increase(+{H.ncellbuffer}) it and reallocate arrays accordingly')
             tmp = np.zeros(ncellmx_old, dtype=np.int32)
-            tmp[:ncellmx_old]=mem['mass_cell_1311'][:ncellmx_old]
-            H.deallocate('mass_cell_1311')
-            H.allocate('mass_cell_1311',H.ncellmx, dtype=np.int32)
-            mem['mass_cell_1311'][:ncellmx_old]=tmp[:ncellmx_old]
-            tmp[:ncellmx_old]=mem['sister_1311'][:ncellmx_old]
-            H.deallocate('sister_1311')
-            H.allocate('sister_1311',H.ncellmx, dtype=np.int32)
-            mem['sister_1311'][:ncellmx_old]=tmp[:ncellmx_old]
-            tmp[:ncellmx_old]=mem['firstchild_1311'][:ncellmx_old]
-            H.deallocate('firstchild_1311')
-            H.allocate('firstchild_1311',H.ncellmx, dtype=np.int32)
-            mem['firstchild_1311'][:ncellmx_old]=tmp[:ncellmx_old]
-            mem['firstchild_1311'][ncellmx_old:H.ncellmx]=0
+            H.adjust_size('mass_cell_1311', H.ncellmx, np.int32, tmp=tmp)
+            H.adjust_size('sister_1311', H.ncellmx, np.int32, tmp=tmp)
+            H.adjust_size('firstchild_1311', H.ncellmx, np.int32, tmp=tmp, init=0)
             del tmp
             tmp = np.zeros(ncellmx_old, dtype=np.float64)
-            tmp[:ncellmx_old]=mem['size_cell_1311'][:ncellmx_old]
-            H.deallocate('size_cell_1311')
-            H.allocate('size_cell_1311',H.ncellmx,dtype=np.float64)
-            mem['size_cell_1311'][:ncellmx_old]=tmp[:ncellmx_old]
+            H.adjust_size('size_cell_1311', H.ncellmx, np.float64, tmp=tmp)
             del tmp
             pos_cell_tmp = np.zeros((3,ncellmx_old), dtype=np.float64)
-            pos_cell_tmp[:3,:ncellmx_old]=mem['pos_cell_1311'][:3,:ncellmx_old]
-            H.deallocate('pos_cell_1311')
-            H.allocate('pos_cell_1311',(3,H.ncellmx))
-            mem['pos_cell_1311'][:3,:ncellmx_old]=pos_cell_tmp[:3,:ncellmx_old]
+            H.adjust_size('pos_cell_1311', (3,H.ncellmx), np.float64, tmp=pos_cell_tmp)
             del pos_cell_tmp
-        mem['pos_cell_1311'][:3,inccell-1]=pos_this_node[:3]
+            timers[-1] += time.time() - ref; ref = time.time()
+        # ---------------------------------------------------
+        
+        ref = time.time()
+        mem['pos_cell_1311'][:3,inccell-1]=pos_this_node
+        timers[header+stage] += time.time() - ref; ref = time.time(); header+=0; stage+=0.1
         mem['mass_cell_1311'][inccell-1]=npart_this_node
+        timers[header+stage] += time.time() - ref; ref = time.time(); header+=0; stage+=0.1
         mem['size_cell_1311'][inccell-1]=2.**(-nlevel)*H.sizeroot*0.5
+        timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 0->1
         if (idmother>0):
             # If this is not the root cell, we link it to its mother
             mem['sister_1311'][inccell-1]=mem['firstchild_1311'][idmother-1]
+            timers[header+stage] += time.time() - ref; ref = time.time(); header+=0; stage+=0.1
             mem['firstchild_1311'][idmother-1]=inccell
+            timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 1->2
+        else:
+            header += 1; stage=0
         if ((npart_this_node <= H.npartpercell) or (nlevel==H.nlevelmax)):
             # If there is only `H.npartpercell` particles in the `H.node_0` or we have reach
             # maximum level of refinement, we are done
             mem['firstchild_1311'][inccell-1]=-(first_pos_this_node+1)
+            timers[-1] += time.time() - ref; ref = time.time() # 1->2
             return
     else:
         # Stop refinement due to no particle in leaf cell
         return
-    timereport.append((f'{icount} check', time.time()-ref)); ref = time.time(); icount+=1
-
+   
     #  Count the number of particles in each subcell of this H.node_0
-    incsubcell_0[:]=0
-    idpart1s = mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node]
-    # xtests = mem['pos_10'][idpart1s-1,:3] - pos_this_node[:3]
-    # timereport.append((f'{icount} xtests', time.time()-ref)); ref = time.time(); icount+=1
-    icids = icellids(mem['pos_10'][idpart1s-1,:3] - pos_this_node[:3])
-    timereport.append((f'{icount} icellids', time.time()-ref)); ref = time.time(); icount+=1
-    uni,count = np.unique(icids, return_counts=True)
-    timereport.append((f'{icount} unique', time.time()-ref)); ref = time.time(); icount+=1
-    incsubcell_0[uni] = count
-    timereport.append((f'{icount} uni count', time.time()-ref)); ref = time.time(); icount+=1
+    idpart1s = mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node].view()
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 2->3
 
-    
+    # tmp = mem['pos_10'][idpart1s-1]
+    tmp = np.take(mem['pos_10'], idpart1s-1, axis=0)
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=0; stage+=0.1
+    icids = icellids(tmp, pos_this_node=pos_this_node, mode=1)
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 3->4
+
+    incsubcell_0 = np.bincount(icids, minlength=8).astype(np.int32)
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 4->5
 
     #  Create the array of positions of the first particle of the lists
     #  of particles belonging to each subnode
-    nsubcell_0[0]=0
+    nsubcell_0 = np.empty(8, dtype=np.int32)
+    nsubcell_0[0] = 0
     nsubcell_0[1:] = np.cumsum(incsubcell_0[:-1])
-    timereport.append((f'{icount} cumsum', time.time()-ref)); ref = time.time(); icount+=1
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 5->6
 
     #  Sort the array of ids (idpart) to gather the particles belonging
     #  to the same subnode. Put the result in `idpart_tmp`.
     argsort = np.argsort(icids, kind='mergesort')
-    timereport.append((f'{icount} argsort', time.time()-ref)); ref = time.time(); icount+=1
-    mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort] # <- This is main part?
-    timereport.append((f'{icount} idpart', time.time()-ref)); ref = time.time(); icount+=1
-    
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 6->7
+
     #  Put back the sorted ids in idpart
-    # for ipar1 in frange(first_pos_this_node+1, first_pos_this_node+npart_this_node):
-    #     mem['idpart_1311'][ipar1-1]=mem['idpart_tmp_1311'][ipar1-1]
-    for tmp in timereport:
-        print(tmp)
+    mem['idpart_1311'][first_pos_this_node : first_pos_this_node+npart_this_node] = idpart1s[argsort]
+    timers[header+stage] += time.time() - ref; ref = time.time(); header+=1; stage=0 # 7->8
 
     #  Call again the routine for the 8 subnodes:
     #  Compute positions of subnodes, new level of refinement, 
     #  positions in the array idpart corresponding to the subnodes,
     #  and call for the treatment recursively.
-    nlevel_out=nlevel+1
+    # nlevel_out=nlevel+1
     idmother_out=inccell
+    scale = H.sizeroot * 2**(-nlevel-2)
+    timers[-1] += time.time() - ref; ref = time.time()
     for j0 in range(7+1):
-        pos_this_node_out=pos_this_node[:3] + H.sizeroot*pos_ref_0[:3,j0]*2**(-nlevel-2)
-        first_pos_this_node_out=first_pos_this_node+nsubcell_0[j0]
-        npart_this_node_out=incsubcell_0[j0]
-        timereport.append((f'{icount} before recursive', time.time()-ref)); ref = time.time(); icount+=1
-        create_KDtree_13110(nlevel_out,pos_this_node_out,npart_this_node_out,first_pos_this_node_out,idmother_out,pos_ref_0=pos_ref_0)
-
-
-
-# def create_KDtree_mod():
-#     # cpos = np.zeros((pos.shape[0],3), dtype=np.float128)
-#     # octarr["done"] = False
-#     octarr = np.zeros(
-#         mem['pos_10'].shape[0], 
-#         dtype=[
-#             ("oct1", np.int64),("oct2", np.int64), ("lvl", np.int8), ("done", bool), 
-#             ("inccell", np.int64), ("idmother", np.int64)
-#             ])
-#     octarr["done"] = False
-#     cpos = np.zeros((mem['pos_10'].shape[0],3), dtype=np.float128)
-#     octarr = refine(mem['pos_10'], octarr, cpos)
-#     lexsort = np.lexsort((octarr["oct2"], octarr["oct1"]))
-#     mem['idpart_1311'] = mem['idpart_1311'][lexsort]
-
-
-# def refine(pos, octarr, cpos):
-#     from num_rec import icellids
-#     yet = ~octarr["done"]
-#     ncell_new = 1
-#     inccell = 1
-#     while(True in yet):
-#         nlevel = int( np.max(octarr["lvl"]) )
-#         if(nlevel >= H.nlevelmax): break
-#         octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
-#         ncell_old = ncell_new
-#         icids = icellids(pos[yet]-cpos[yet])+1
-#         if(nlevel > 14):
-#             octarr['oct2'] *= 10
-#             octarr['oct2'][yet] += icids
-#         else:
-#             octarr['oct1'] *= 10
-#             octarr['oct1'][yet] += icids
-#         octarr['lvl'][yet] += 1
-
-#         octid = octarr['oct1'] if(nlevel < 15) else octarr['oct1']+1j*octarr['oct2']
-#         uni, count = np.unique(octid[yet], return_counts=True)
-#         if(1 in count):
-#             leafind = np.where(count==1)[0]
-#             leaf = uni[leafind]
-#             isin = np.isin(octid, leaf)
-#             octarr["done"][isin] = True
-#         a,b = np.unique(octarr['lvl'], return_counts=True)
-#         ncell_new = np.sum(b[:-1]) + len( np.unique(octid[octarr['lvl'] == a[-1]]) )
-#         print(f"[lvl={nlevel}] {ncell_old} -> {ncell_new} [{octarr[0]}, {octarr[yet][0]}]")
-#         cpos[yet] += H.sizeroot*H.pos_ref_0[:3,icids-1].T * 2**(-nlevel-2)
-#         yet = ~octarr["done"]
-#     print(f"[lvl={nlevel}] KDtree done")
-#     return octarr
-
-
-
+        create_KDtree_13110(
+            nlevel+1, # nlevel_out,
+            # pos_this_node[:3] + H.sizeroot*pos_ref_0[:3,j0]*2**(-nlevel-2), #pos_this_node_out,
+            pos_this_node[:3] + scale*pos_ref_0[:3,j0], #pos_this_node_out,
+            incsubcell_0[j0], #npart_this_node_out,
+            first_pos_this_node+nsubcell_0[j0], #first_pos_this_node_out,
+            idmother_out,
+            pos_ref_0=pos_ref_0)
 
 #=======================================================================
 def remove_degenerate_particles():

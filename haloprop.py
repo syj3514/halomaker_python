@@ -36,6 +36,9 @@ def virial(snap):
     end if
     
     vir_overdens = omega_maxexp/omega_f/redc**3*(aexp/af)**3
+    print("########")
+    print(vir_overdens)
+    print("########")
     Lboxp          = snap.boxlen*snap.unit_l/3.08e24/snap.aexp
     Lbox_pt  = Lboxp*snap.aexp
     rho_mean     = mboxp/Lbox_pt**3

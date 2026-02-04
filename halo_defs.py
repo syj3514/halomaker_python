@@ -22,9 +22,14 @@ Test_FOF = False
 #======================================================================
 # Memory allocation
 #======================================================================
+mprefix = ["HaloMaker", "uNone", "tNone"] # Halo/Galaxy, uid, runtime
+def collapse_mprefix():
+    global mprefix
+    return "_".join([i for i in mprefix])
 mem = {}
 mem_address = {}
 globvars = {}
+massalloc=False
 
 pos_ref_0 = np.array([
     -1., -1., -1.,
@@ -37,17 +42,23 @@ pos_ref_0 = np.array([
      1.,  1.,  1.], dtype=np.float64)
 pos_ref_0 = pos_ref_0.reshape((3, 8), order='F')
 
+def maccess(name):
+    global mem_address
+    temp, shape, dtype = mem_address[name]
+    return np.ndarray(shape, dtype=dtype, buffer=temp.buf)
+
 
 def allocate(name, shape, dtype=np.float64):
     global mem, mem_address
     if(DEV): print(f"\t@Allocating memory `{name}` | {shape}")
     arr = np.empty(shape, dtype=dtype)
-    temp = shared_memory.SharedMemory(create=True, size=arr.nbytes, name=name)
+    _name = collapse_mprefix() + f"_{name}"
+    temp = shared_memory.SharedMemory(create=True, size=arr.nbytes, name=_name)
     if(name in mem_address.keys()):
         if(mem_address[name] is not None):
             raise Exception(f"\t@Memory address `{name}` already exists")
-    mem_address[name] = temp
-    mem[name] = np.ndarray(arr.shape, dtype=dtype, buffer=mem_address[name].buf)
+    mem_address[name] = [temp, arr.shape, dtype]
+    mem[name] = np.ndarray(arr.shape, dtype=dtype, buffer=mem_address[name][0].buf)
     arr = None
 
 def allocated(name):
@@ -61,9 +72,9 @@ def deallocate(*names):
             if(DEV): print(f"\t@Deallocating memory `{name}`")
             if mem_address[name] is not None:
                 mem[name] = None
-                mem_address[name].close()
-                mem_address[name].unlink()
-                mem_address[name] = None
+                mem_address[name][0].close()
+                mem_address[name][0].unlink()
+                mem_address[name][0] = None
             del mem[name]
             del mem_address[name]
     if(list(mem.keys())==0):
@@ -77,11 +88,54 @@ def flush(msg=True, parent=''):
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     if(len(mem_address) > 0):
         if(msg or DEV): print(f"\t@{parent} Clearing memory")
-        if(msg or DEV): print(f"\t   {[i.name for i in mem_address.values()]}")
+        if(msg or DEV): print(f"\t   {[i[0].name for i in mem_address.values()]}")
         deallocate(*mem_address.keys())
     if(msg or DEV): print("\t@Memory Clear Done")
     sys.exit(0)
 atexit.unregister(flush)
+
+def adjust_size(name, new_shape, dtype, tmp=None, init=None):
+    if isinstance(new_shape, int):
+        new_shape = (new_shape,)
+    old_shape = mem[name].shape
+    if tmp is None:
+        tmp = np.empty(old_shape, dtype=dtype)
+    if len(old_shape)==1:
+        tmp[:] = mem[name][:]
+        deallocate(name)
+        allocate(name, new_shape, dtype=dtype)
+        leng = min(old_shape[0], new_shape[0])
+        mem[name][:leng] = tmp[:leng]
+        if init is not None:
+            mem[name][leng:] = init
+    elif len(old_shape)==2:
+        nrow = old_shape[0]
+        tmp[:,:] = mem[name][:,:]
+        deallocate(name)
+        allocate(name, new_shape, dtype=dtype)
+        leng = min(old_shape[1], new_shape[1])
+        mem[name][:nrow,:leng] = tmp[:nrow,:leng]
+        if init is not None:
+            mem[name][nrow:,leng:] = init
+
+
+
+def datdump(data, path, msg=False):
+    # assert isinstance(data[0], np.ndarray), "Data should be numpy.ndarray"
+    # assert isinstance(data[1], str)
+    leng = len(data)
+    with open(path, "wb") as f:
+        f.write(leng.to_bytes(4, byteorder='little'))
+        f.write(data.tobytes())
+    if(msg): print(f" `{path}` saved")
+
+def datload(path, dtype='f8', msg=False):
+    a = dtype[0]; b=int(dtype[1])
+    with open(path, "rb") as f:
+        leng = int.from_bytes(f.read(4), byteorder='little')
+        data = np.frombuffer(f.read(b*leng), dtype=dtype)
+    if(msg): print(f" `{path}` loaded")
+    return data
 
 #======================================================================
 # useful types :
@@ -108,21 +162,28 @@ class baryon:
         self.tvir = None
         self.cvel = None
 
+class extend:
+    __slots__ = ['mcontam']
+    def __init__(self):
+        self.mcontam = None
+
 class hprofile:
-    __slots__ = ["rho_0", "r_c"]
+    __slots__ = ["rho_0", "r_c", "cNFW"]
     def __init__(self):
         self.rho_0 = None
         self.r_c = None
+        self.cNFW = None
 
 liste_halos_o0:list['halo'] = []
 class halo:
-    __slots__ = ["datas", "sh", "p", "v", "L", "halo_profile", "my_number", "my_timestep", "nbsub", "hosthalo", "hostsub", "level", "nextsub", "m", "r", "spin", "sigma", "ek", "ep", "et"]
+    __slots__ = ["datas", "sh", "p", "v", "L", "E", "halo_profile", "my_number", "my_timestep", "nbsub", "hosthalo", "hostsub", "level", "nextsub", "m", "r", "spin", "sigma", "ek", "ep", "et"]
     def __init__(self):
         self.datas = baryon()
         self.sh = shape()
         self.p = vector()
         self.v = vector()
         self.L = vector()
+        self.E = extend()
         self.halo_profile = hprofile()
         self.my_number = None
         self.my_timestep = None
@@ -171,6 +232,8 @@ class halo:
         self.datas.cvel = np.float64(0.0)
         self.halo_profile.rho_0 = np.float64(0.0)
         self.halo_profile.r_c = np.float64(0.0)
+        self.halo_profile.cNFW = np.float64(0.0)
+        self.E.mcontam = np.float64(0.0)
     
     def write_halo(self, fname):
         '''
@@ -190,12 +253,13 @@ class halo:
             f.write_record(self.p.x,self.p.y,self.p.z)
             f.write_record(self.v.x,self.v.y,self.v.z)
             f.write_record(self.L.x,self.L.y,self.L.z )
-            f.write_record(self.r, self.sself.a, self.sself.b, self.sself.c)
+            f.write_record(self.r, self.sh.a, self.sh.b, self.sh.c)
             f.write_record(self.ek,self.ep,self.et)
             f.write_record(self.spin)
             f.write_record(self.sigma)
             f.write_record(self.datas.rvir,self.datas.mvir,self.datas.tvir,self.datas.cvel)
-            f.write_record(self.halo_profile.rho_0,self.halo_profile.r_c)
+            f.write_record(self.halo_profile.rho_0,self.halo_profile.r_c,self.halo_profile.cNFW)
+            f.write_record(self.E.mcontam)
 #======================================================================
 
 
