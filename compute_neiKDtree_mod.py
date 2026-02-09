@@ -315,10 +315,14 @@ import halo_defs as H
 from halo_defs import mem,frange,maccess, datdump, datload
 import numpy as np
 from tqdm import tqdm
-from num_rec import spline, icellid, icellids, counting_argsort_8
+from num_rec import spline, splines, icellid, icellids, counting_argsort_8
 from multiprocessing import Pool
 import time, os
 import faulthandler, signal, sys
+from scipy.spatial import cKDTree
+from functools import partial
+
+def stop(): raise ValueError("Stop")
 
 #   use halo_defs
 #   integer::ncall         #YDdebug
@@ -678,11 +682,27 @@ def make_linked_node_list():
 #=======================================================================
     raise NotImplementedError("`make_linked_node_list` is used in BHM which is not implemented")
 
+def _compute_mean_density_worker(ipar1, poshere):
+    dist2_0, iparnei = find_nearest_parts_13120(ipar1, poshere) # <---- Main bottleneck
+    if(np.sum(iparnei)==0):
+        print(ipar1)
+        print(dist2_0)
+        print(iparnei)
+        raise ValueError('No neighbors found for particle', ipar1)
+    compute_density_13121(ipar1,dist2_0,iparnei)
+    mem['iparneigh_1312'][:H.nhop,ipar1-1]=iparnei[:H.nhop]
+
+def _compute_mean_density_chunk(ipar1start, ipar1end):
+    poss = mem['pos_10'][ipar1start-1:ipar1end]
+    for ipar1, ipos in zip(range(ipar1start, ipar1end+1), poss):
+        _compute_mean_density_worker(ipar1, ipos)
+    
 #=======================================================================
 def compute_mean_density_and_np_1312():
 #=======================================================================
-    dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
-    iparnei = np.empty(H.nvoisins, dtype=np.int32)
+    # dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
+    # iparnei = np.empty(H.nvoisins, dtype=np.int32)
+    
 
     if (H.verbose): print('Compute mean density for each particle...')
 
@@ -691,23 +711,47 @@ def compute_mean_density_and_np_1312():
 
     if (H.verbose): print('First find nearest particles')
 
-    # !$OMP PARALLEL DO &
-    # !$OMP DEFAULT(SHARED) &
-    # !$OMP PRIVATE(ipar,dist2_0,iparnei)
-    iterator = tqdm(frange(1,H.npart))
-    #for ipar1 in frange(1,H.npart):
-    for ipar1 in iterator:
-        dist2_0, iparnei = find_nearest_parts_13120(ipar1,dist2_0,iparnei)
-        compute_density_13121(ipar1,dist2_0,iparnei)
-        mem['iparneigh_1312'][:H.nhop,ipar1-1]=iparnei[:H.nhop]
-    # !$OMP END PARALLEL DO
+    DEBUG=False
+    CHUNK = True
+    pos = mem['pos_10']
+    if (H.nbPes == 1)or(DEBUG): # Single process
+        iterator = tqdm(zip(frange(1,H.npart), pos), total=H.npart, desc='[Ncpu=1] Compute density')
+        for ipar1, ipos in iterator:
+            _compute_mean_density_worker(ipar1, ipos)
+        iterator.close()
+    else:
+        if CHUNK:
+            pbar = tqdm(total=H.npart, desc=f'[Ncpu={H.nbPes}] Compute density', mininterval=0.5)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            # Split the work into chunks to reduce overhead
+            tmp = np.linspace(1, H.npart+1, H.nbPes*100+1, dtype=np.int32)
+            ipar1starts = tmp[:-1]
+            ipar1ends   = tmp[1:]
+            with Pool(processes=H.nbPes) as pool:
+                async_results = []
+                for ipar1start, ipar1end in zip(ipar1starts, ipar1ends):
+                    r = pool.apply_async(_compute_mean_density_chunk, args=(ipar1start, ipar1end), callback=lambda _: pbar.update(ipar1end - ipar1start+1))
+                    async_results.append(r)
+                for r in async_results:
+                    r.get()
+            signal.signal(signal.SIGTERM, H.flush)
+            pbar.close()
+        else:
+            pbar = tqdm(total=H.npart, desc=f'[Ncpu={H.nbPes}] Compute density', mininterval=0.5)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            with Pool(processes=H.nbPes) as pool:
+                async_results = []
+                for ipar1, ipos in zip(range(1, H.npart+1), pos):
+                    r = pool.apply_async(_compute_mean_density_worker, args=(ipar1, ipos), callback=lambda _: pbar.update())
+                    async_results.append(r)
+                for r in async_results:
+                    r.get()
+            signal.signal(signal.SIGTERM, H.flush)
+            pbar.close()
 
     # Check for average density
     if (H.verbose):
         densav = mem['density_1312'].mean()
-        #densav=0
-        #for ipar1 in frange(1,H.npart):
-        #    densav=(densav*(ipar1-1)+mem['density_1312'][ipar1-1])/ipar1
         print('Average density :',densav)
     
     H.deallocate('mass_cell_1311')
@@ -715,32 +759,73 @@ def compute_mean_density_and_np_1312():
     H.deallocate('pos_cell_1311')
     H.deallocate('sister_1311')
     H.deallocate('firstchild_1311')
+    stop()
+
+    return
+
 
 #=======================================================================
 def find_local_maxima_1313():
 #=======================================================================
 #   integer(kind=4)             :: ipar,idist,iparid,iparsel,igroup,nmembmax,nmembtot
 #   integer(kind=4),allocatable :: nmemb(:)
-#   real(kind=8)                :: denstest
+#   real(kind=8)                :: densest
 
     if (H.verbose): print('Now Find local maxima...')
 
     H.allocate('igrouppart_1313', H.npart)
 
+    # Previously, this is sorted by octree-order
+    # But, now we resort by density order
     mem['idpart_1311'][:]=0
     H.ngroups=0
+    # 이거 그냥 array로 돌리면 빠를듯
+    # 아래 예시 참고
+    '''
+    den = np.random.rand(12)
+    idx = np.arange(12)
+    text = np.array([
+        [0,1,2,3],
+        [1,2,3,4],
+        [2,3,4,5],
+        [3,4,5,6],
+        [4,5,6,7],
+        [5,6,7,8],
+    ])
+    print(den)
+    print(den[text])
+    argmax=np.argmax(den[text], axis=1)
+    '''
+    # 그리고 뭐 예를 들면, unique를 활용해서 같은 그룹을 한방에 정리가능할지도
+
     for ipar1 in frange(1,H.npart):
-        denstest=mem['density_1312'][ipar1-1]
-        if (denstest>H.rho_threshold):
+        densest=mem['density_1312'][ipar1-1]
+        if (densest>H.rho_threshold):
             iparsel1=ipar1
+        ## Original
         for idist0 in range(H.nhop):
             iparid1=mem['iparneigh_1312'][idist0,ipar1-1]
-            if (mem['density_1312'][iparid1-1]>denstest):
+            if (mem['density_1312'][iparid1-1]>densest):
                 iparsel1=iparid1
-                denstest=mem['density_1312'][iparid1-1]
-            elif (mem['density_1312'][iparid1-1]==denstest):
+                densest=mem['density_1312'][iparid1-1]
+            elif (mem['density_1312'][iparid1-1]==densest):
                 iparsel1=min(iparsel1,iparid1)
-                if (H.verbose): print('WARNING : equal densities in find_local_maxima.')
+                if (H.verbose):
+                    print('WARNING : equal densities in find_local_maxima.')
+        # ------------
+        ## Vectorized
+        iparid1s = mem['iparneigh_1312'][:,ipar1-1]
+        densities = mem['density_1312'][iparid1s - 1]
+        argmax = np.argmax(densities)
+        max_density = densities[argmax]
+        if max_density > densest:
+            iparsel1 = iparid1s[argmax]
+            densest = max_density
+        elif max_density == densest:
+            iparsel1 = min(iparsel1, iparid1s[argmax])
+            if H.verbose:
+                print('WARNING : equal densities in find_local_maxima.')
+        # ------------
         if (iparsel1==ipar1):
             H.ngroups += 1
             mem['idpart_1311'][ipar1-1]=-H.ngroups
@@ -1363,42 +1448,163 @@ def compute_saddle_list_13140():
 #=======================================================================
 def compute_density_13121(ipar1,dist2_0,iparnei):
 #=======================================================================
-    r=np.sqrt(dist2_0[H.nvoisins])*0.5
-    unsr=1./r
-    contrib=0.
+    # # Loop version
+    # r=np.sqrt(dist2_0[H.nvoisins])*0.5
+    # unsr=1./r
+    # contrib=0.
+    # if H.massalloc:
+    #     memmass = mem['mass_10']
+
+    # for idist0 in range(H.nvoisins-1):
+    #     #if(H.allocated('mass_10')):
+    #     if(H.massalloc):
+    #         contrib += memmass[iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
+    #     else:
+    #         contrib += H.massp*spline(np.sqrt(dist2_0[idist0+1])*unsr)
+
+    # # Add the contribution of the particle itself and normalize properly
+    # # to get a density with average unity (if computed on an uniform grid)
+    # # note that this assumes that the total mass in the box is normalized to 1.
+    # #if(H.allocated('mass_10')):
+    # if(H.massalloc):
+    #     mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+memmass[ipar1-1]) /(H.pi*r**3)
+    # else:
+    #     mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib + H.massp) /(H.pi*r**3)
+    
+    # Vectorized version
+    r = np.sqrt(dist2_0[H.nvoisins]) * 0.5
     if H.massalloc:
-        memmass = mem['mass_10']
-    for idist0 in range(H.nvoisins-1):
-        #if(H.allocated('mass_10')):
-        if(H.massalloc):
-            contrib += memmass[iparnei[idist0]-1]*spline(np.sqrt(dist2_0[idist0+1])*unsr)
-        else:
-            contrib += H.massp*spline(np.sqrt(dist2_0[idist0+1])*unsr)
-    # Add the contribution of the particle itself and normalize properly
-    # to get a density with average unity (if computed on an uniform grid)
-    # note that this assumes that the total mass in the box is normalized to 1.
-    #if(H.allocated('mass_10')):
-    if(H.massalloc):
-        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib+memmass[ipar1-1]) /(H.pi*r**3)
+        mneighs = mem['mass_10'][iparnei - 1]
+        mmy = mem['mass_10'][ipar1 - 1]
     else:
-        mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*(contrib + H.massp) /(H.pi*r**3)
+        mneighs = H.massp
+        mmy = H.massp
+    contrib = np.sum(mneighs * splines(np.sqrt(dist2_0[1:H.nvoisins+1]) / r)) + mmy
+    mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*contrib /(H.pi*r**3)
 
 #=======================================================================
-def find_nearest_parts_13120(ipar1,dist2_0,iparnei):
+def find_nearest_parts_13120(ipar1, poshere):
 #=======================================================================
-    #poshere = np.empty(3, dtype=np.float64)
-    #poshere[:]=mem['pos_10'][ipar1-1]
-    poshere = mem['pos_10'][ipar1-1].view()
-    #dist2_0[0]=0.
-    #dist2_0[1:] = H.bignum
-    dist2_0.fill(H.bignum); dist2_0[0]=0.0
+    # dist2_0 = np.full(H.nvoisins+1, H.bignum, dtype=np.float64)
+    # dist2_0[0]=0.0
+    # iparnei = np.zeros(H.nvoisins, dtype=np.int32)
+    # icell_identity1 =1
+    # inccellpart = 0
+    # dist2_0, iparnei = walk_tree_131200(
+    #     # Input
+    #     ipar1,icell_identity1,poshere,
+    #     # Output
+    #     dist2_0,iparnei, inccellpart)
+    
+    dist2_0 = np.full(H.nvoisins+1, H.bignum, dtype=np.float64)
+    dist2_0[0]=0.0
+    iparnei = np.zeros(H.nvoisins, dtype=np.int32)
     icell_identity1 =1
-    dist2_0, iparnei = walk_tree_131200(icell_identity1,poshere,dist2_0,ipar1,iparnei)
+    inccellpart = 0
+    dist2_0, iparnei = walk_tree_norec_131200(
+        # Input
+        ipar1,icell_identity1,poshere,
+        # Output
+        dist2_0,iparnei, inccellpart)
+    return dist2_0, iparnei
+
+
+def walk_tree_norec_131200(iparid1,icellidin1,poshere,dist2_0,iparnei, inccellpart):
+    '''
+    Non-recursive version of walk_tree_131200.
+    '''
+    # Current Information
+    maxdist = dist2_0[H.nvoisins]
+    boxarr = np.array([H.xlong, H.ylong, H.zlong])
+    boxarrT = boxarr[:, np.newaxis]
+    poshereT = poshere[:, np.newaxis]
+
+    firstchild = mem['firstchild_1311']
+    pos_cell = mem['pos_cell_1311']
+    size_cell = mem['size_cell_1311']
+    sister = mem['sister_1311']
+    mass_cell = mem['mass_cell_1311']
+    pos = mem['pos_10']
+    idpart = mem['idpart_1311']
+
+    stack = [(icellidin1, 0.0, False)]
+    while stack:
+        icellid, idiscell, isleaf = stack.pop()
+        # mylvl = np.log2(H.xlong/size_cell[icellid-1]/2)
+        if idiscell >= maxdist: continue
+        icell_identity1 = icellid#firstchild[icellid-1]
+        # Am I leaf or not??
+        if isleaf:
+            # If still close
+            if (idiscell < maxdist):
+                
+                first_pos_this_node=-firstchild[icellid-1]-1 # First particle index
+                mynpart = mass_cell[icellid-1]
+                # ----------------------------------------------------
+                # [Development - vectorized version]
+                myparts = idpart[first_pos_this_node : first_pos_this_node+mynpart]
+                if iparid1 in myparts:
+                    myparts = myparts[myparts != iparid1]
+                    mynpart -= 1
+                if mynpart==0: continue
+                dpos = np.abs(pos[myparts-1,:] - poshere)
+                dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos)
+                distance2p = np.sum(dpos**2, axis=1)
+                if distance2p.min() < maxdist:
+                    # Merge and sort `dist2_0`
+                    tmp = np.concatenate( (dist2_0[1:], distance2p) )
+                    partitioned_indices = np.argpartition(tmp, H.nvoisins)[:H.nvoisins]
+                    ordk = np.argsort(tmp[partitioned_indices])
+                    partitioned_indices = partitioned_indices[ordk]
+                    tmp = tmp[partitioned_indices]
+                    dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
+                    dist2_0[0] = 0.0; dist2_0[1:] = tmp; maxdist = dist2_0[H.nvoisins]
+                    # Merge and sort `iparnei`
+                    tmp = np.concatenate( (iparnei, myparts) )
+                    iparnei = tmp[partitioned_indices]
+        else:
+            icell_identity1 = firstchild[icellid-1]
+            sc = size_cell[icell_identity1-1]
+            # sonlvl = np.log2(H.xlong/sc/2)
+            # STEP1) Split Child cells
+            icell_identity1s = np.zeros(8, dtype=np.int32)
+            for inc in range(8):
+                icell_identity1s[inc] = icell_identity1
+                icell_identity1=sister[icell_identity1-1]
+                if (icell_identity1 == 0):
+                    break
+            inc += 2
+            if inc<9: icell_identity1s = icell_identity1s[:inc-1]
+            
+            dpos = np.abs(pos_cell[:, icell_identity1s-1] - poshereT)
+            dpos = np.where(dpos > boxarrT/2, boxarrT - dpos, dpos)
+            dpos -= sc
+            dpos[dpos < 0] = 0.0  # <--- Inside the cell
+            distance2s = np.sum(dpos**2, axis=0)
+            
+            mask = maxdist > distance2s
+            if not np.any(mask):
+                # return dist2_0, iparnei
+                continue
+            inc = np.sum(mask)+1
+            inccellpart += inc - 1
+            distance2s = distance2s[mask]
+            icell_identity1s = icell_identity1s[mask]
+            argsort = np.argsort(distance2s)
+            discell2_0 = np.empty(distance2s.size + 1, dtype=np.float64)
+            discell2_0[0] = 0.0; discell2_0[1:] = distance2s[argsort]
+            icid = icell_identity1s[argsort]  # Cell IDs
+
+            stacks = [(icid[i], discell2_0[i+1]) for i in range(inc-1)][::-1]
+            for istack in stacks:
+                icellid_out1, idiscell = istack
+                if idiscell < maxdist:
+                    stack.append((icellid_out1, idiscell, firstchild[icellid_out1-1]<0))
     return dist2_0, iparnei
 
 
 #=======================================================================
-def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
+def walk_tree_131200(iparid1,icellidin1,poshere,dist2_0,iparnei, inccellpart):
 #=======================================================================
     '''
     The subroutine 
@@ -1410,63 +1616,89 @@ def walk_tree_131200(icellidin1,poshere,dist2_0, iparid1,iparnei):
     
     - by ChatGPT Jan 9
     '''
-    discell2_0 = np.zeros(9, dtype=np.float64)
-    icid = np.zeros(8, dtype=np.int32)
 
+    maxdist = dist2_0[H.nvoisins]
     icell_identity1 = mem['firstchild_1311'][icellidin1-1]
-    inc=1
-    discell2_0[0]=0
-    discell2_0[1:]=1e30
+    sc = mem['size_cell_1311'][icell_identity1-1]  # Distance to cell face
+    # lvl = np.log2(H.xlong/mem['size_cell_1311'][icellidin1-1]/2)
     # Until icell_identity1==0: (Final leaf of tree)
     # Calc distance (poshere <-> cells)
-    while (icell_identity1 != 0):
-        sc=mem['size_cell_1311'][icell_identity1-1]
-        dx=abs(mem['pos_cell_1311'][0,icell_identity1-1]-poshere[0])
-        dx=max(0.,min(dx,H.xlong-dx)-sc)
-        dy=abs(mem['pos_cell_1311'][1,icell_identity1-1]-poshere[1])
-        dy=max(0.,min(dy,H.ylong-dy)-sc)
-        dz=abs(mem['pos_cell_1311'][2,icell_identity1-1]-poshere[2])
-        dz=max(0.,min(dz,H.zlong-dz)-sc)
-        distance2=dx**2+dy**2+dz**2
-        if (distance2 < dist2_0[H.nvoisins]):
-            idist=inc-1
-            while (discell2_0[idist]>distance2):
-                discell2_0[idist+1]=discell2_0[idist]
-                icid[idist]=icid[idist-1]
-                idist -= 1
-            discell2_0[idist+1]=distance2
-            icid[idist]=icell_identity1
-            inc += 1
-        icell_identity1=mem['sister_1311'][icell_identity1-1]
-    # inccellpart += inc-1
+    sister = mem['sister_1311']
+    boxarr = np.array([H.xlong, H.ylong, H.zlong])
+    boxarrT = boxarr[:, np.newaxis]
+
+    icell_identity1s = np.zeros(8, dtype=np.int32)
+    for inc in range(8):
+        icell_identity1s[inc] = icell_identity1
+        icell_identity1=sister[icell_identity1-1]
+        if (icell_identity1 == 0):
+            break
+    inc += 2
+    if inc<9: icell_identity1s = icell_identity1s[:inc-1]
+
+    poshereT = poshere[:, np.newaxis]
+    dpos = np.abs(mem['pos_cell_1311'][:, icell_identity1s-1] - poshereT)
+    dpos = np.where(dpos > boxarrT/2, boxarrT - dpos, dpos)
+    # sc = mem['size_cell_1311'][icell_identity1s-1]  # Distance to cell face
+    dpos -= sc
+    dpos[dpos < 0] = 0.0  # <--- Inside the cell
+    distance2s = np.sum(dpos**2, axis=0)
+    
+    mask = maxdist > distance2s
+    if not np.any(mask):
+        return dist2_0, iparnei
+    inc = np.sum(mask)+1
+    inccellpart += inc - 1
+    distance2s = distance2s[mask]
+    icell_identity1s = icell_identity1s[mask]
+    argsort = np.argsort(distance2s)
+    discell2_0 = np.empty(distance2s.size + 1, dtype=np.float64)
+    discell2_0[0] = 0.0; discell2_0[1:] = distance2s[argsort]
+    icid = icell_identity1s[argsort]  # Cell IDs
+
     # Loop for counted cells,
     # Update the closest particle ID(in iparnei) and the distance to that part(in dist2_0)
+    pos = mem['pos_10']
+    mass_cell = mem['mass_cell_1311']
+    idpart = mem['idpart_1311']
     for ic0 in range(inc-1):
         icellid_out1=icid[ic0]
+        # lvl = np.log2(H.xlong/sc/2)
+        # If this cell is a leaf, calc dists from inside particles
         if (mem['firstchild_1311'][icellid_out1-1] < 0):
-            if (discell2_0[ic0+1]<dist2_0[H.nvoisins]):
-                first_pos_this_node=-mem['firstchild_1311'][icellid_out1-1]-1
-                for i1 in frange(first_pos_this_node+1, first_pos_this_node+mem['mass_cell_1311'][icellid_out1]):
-                    iparcell1=mem['idpart_1311'][i1-1]
-                    dx=abs(mem['pos_10'][iparcell1-1, 0]-poshere[0])
-                    dx=max(0.,min(dx,H.xlong-dx))
-                    dy=abs(mem['pos_10'][iparcell1-1, 1]-poshere[1])
-                    dy=max(0.,min(dy,H.ylong-dy))
-                    dz=abs(mem['pos_10'][iparcell1-1, 2]-poshere[2])
-                    dz=max(0.,min(dz,H.zlong-dz))
-                    distance2p=dx**2+dy**2+dz**2
-                    if (distance2p < dist2_0[H.nvoisins]): 
-                        if (iparcell1 != iparid1):
-                            idist1=H.nvoisins-1
-                            while (dist2_0[idist1]>distance2p):
-                                dist2_0[idist1+1]=dist2_0[idist1]
-                                iparnei[idist1]=iparnei[idist1-1]
-                                idist1 -= 1
-                            dist2_0[idist1+1]=distance2p
-                            iparnei[idist1]=iparcell1
-        elif (discell2_0[ic0+1] < dist2_0[H.nvoisins]):
+            # If still close
+            if (discell2_0[ic0+1]<maxdist):
+                # print(icellid_out1, discell2_0[ic0+1], maxdist)
+                first_pos_this_node=-mem['firstchild_1311'][icellid_out1-1]-1 # First particle index
+                mynpart = mass_cell[icellid_out1-1]
+                # ----------------------------------------------------
+                # [Development - vectorized version]
+                myparts = idpart[first_pos_this_node : first_pos_this_node+mynpart]
+                if iparid1 in myparts:
+                    myparts = myparts[myparts != iparid1]
+                    mynpart -= 1
+                if mynpart==0: return dist2_0, iparnei
+                dpos = np.abs(pos[myparts-1,:] - poshere)
+                dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos)
+                distance2p = np.sum(dpos**2, axis=1)
+                if distance2p.min() < maxdist:
+                    # Merge and sort `dist2_0`
+                    tmp = np.concatenate( (dist2_0[1:], distance2p) )
+                    partitioned_indices = np.argpartition(tmp, H.nvoisins)[:H.nvoisins]
+                    ordk = np.argsort(tmp[partitioned_indices])
+                    partitioned_indices = partitioned_indices[ordk]
+                    tmp = tmp[partitioned_indices]
+                    dist2_0 = np.empty(H.nvoisins+1, dtype=np.float64)
+                    dist2_0[0] = 0.0; dist2_0[1:] = tmp; maxdist = dist2_0[H.nvoisins]
+                    # Merge and sort `iparnei`
+                    tmp = np.concatenate( (iparnei, myparts) )
+                    iparnei = tmp[partitioned_indices]
+                # ----------------------------------------------------
+        # If (not a leaf) and (still close)
+        elif (discell2_0[ic0+1] < maxdist):
             # walk_tree(icellid_out1,poshere,dist2_0,iparid1,inccellpart,iparnei)
-            dist2_0, iparnei = walk_tree_131200(icellid_out1,poshere,dist2_0,iparid1,iparnei)
+            dist2_0, iparnei = walk_tree_131200(iparid1,icellid_out1,poshere,dist2_0,iparnei, inccellpart)
+            maxdist = dist2_0[H.nvoisins]
         else: pass
     return dist2_0, iparnei
 
@@ -1488,40 +1720,6 @@ def create_tree_structure_1311():
     H.allocate('sister_1311',H.ncellmx, dtype=np.int32)
     H.allocate('firstchild_1311',H.ncellmx, dtype=np.int32)
 
-    # # -----------------------------------------------------
-    # # [ORIGINAL RECURSIVE MODE]    
-    # mem['idpart_1311'][:] = np.arange(H.npart, dtype=np.int32)+1
-
-    # nlevel=0
-    # inccell=0
-    # idmother=0
-    # pos_this_node[:]=np.float64(0.)
-    # npart_this_node=H.npart
-    # first_pos_this_node=0
-    # mem['pos_cell_1311'][:]=0
-    # mem['size_cell_1311'][:]=0
-    # mem['mass_cell_1311'][:]=0
-    # mem['sister_1311'][:]=0
-    # mem['firstchild_1311'][:]=0
-    # H.sizeroot = np.float64( np.max([H.xlong,H.ylong,H.zlong]) )
-
-    # print("[create_tree_structure]")
-    # print("[create_tree_structure]")
-    # print("[create_tree_structure]")
-    # print("[create_tree_structure]")
-    # ref = time.time()
-    # create_KDtree_13110(
-    #     nlevel,
-    #     pos_this_node,
-    #     npart_this_node,
-    #     # inccell,
-    #     first_pos_this_node,
-    #     idmother)
-    # ncell=inccell
-    # if (H.verbose): print('total number of cells =',ncell)
-    # print(time.time()-ref, " seconds to create the tree structure")
-    # # -----------------------------------------------------
-
     # -----------------------------------------------------
     # [ITERATIVE MODE]
     mem['idpart_1311'][:] = np.arange(H.npart, dtype=np.int32)+1
@@ -1539,10 +1737,6 @@ def create_tree_structure_1311():
     mem['firstchild_1311'][:]=0
     H.sizeroot = np.float64( np.max([H.xlong,H.ylong,H.zlong]) )
 
-    print("[create_tree_structure]")
-    print("[create_tree_structure]")
-    print("[create_tree_structure]")
-    print("[create_tree_structure]")
     ref = time.time()
 
     # -------------------------------------------------------
@@ -1581,6 +1775,7 @@ def create_tree_structure_1311():
         iterator = tqdm(range(nchunk), desc=f"[Ncpu=1] Creating KD-tree chunks")
         for ichunk in iterator:
             _create_KDtree_worker(ichunk, stack_chunks[ichunk], inccell)
+        iterator.close()
     else: # Multi processes
         pbar = tqdm(total=nchunk, desc=f"[Ncpu={H.nbPes}] Creating KD-tree chunks")
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -1592,6 +1787,7 @@ def create_tree_structure_1311():
             for r in async_results:
                 r.get()
         signal.signal(signal.SIGTERM, H.flush)
+        pbar.close()
         
     # -------------------------------------------------------
     # Rearrange
@@ -1599,18 +1795,18 @@ def create_tree_structure_1311():
     ncell_chunks = mem['ncell_chunks_1311']
     inccell += np.sum(ncell_chunks)
     ncell_cumul = np.cumsum(ncell_chunks)
-    _ncell_cumul = np.insert(ncell_cumul, 0, 0)
+    _ncell_cumul = np.empty(nchunk+1, dtype=np.int32)
+    _ncell_cumul[0] = 0; _ncell_cumul[1:] = ncell_cumul
     insert_starts = _ncell_cumul[:-1] + nroot_cumsum
-    _nroot_cumsum = np.insert(nroot_cumsum, 0, 0)
+    _nroot_cumsum = np.empty(nchunk+1, dtype=np.int32)
+    _nroot_cumsum[0] = 0; _nroot_cumsum[1:] = nroot_cumsum
     insert_ends   = _nroot_cumsum[1:]  + ncell_cumul
     nroot_remains = nrootcells - nroot_cumsum
-    # shift_ends    = insert_starts + nroot_remains
     root_index = np.arange(nrootcells) + np.repeat(_ncell_cumul[:-1], nroot_counts)
-    # root_index_old = np.arange(nrootcells)
     
 
     # -------------------------------------------------------
-    # Gathering <-------- Need for multi-process!!!!!!!!!!
+    # Gathering
     # -------------------------------------------------------
     cellkeys = [('mass_cell', 'i4'), ('size_cell', 'f8'),
                 ('pos_cell', 'f8'), ('sister', 'i4'),
@@ -1632,6 +1828,7 @@ def create_tree_structure_1311():
             ncell_ichunk, ncell_allchunk, iroot1, iroot2,
             root_index, cellkeys, nroot_counts
             )
+        iterator.close()
     else: # Multi processes
         pbar = tqdm(total=nchunk, desc=f"[Ncpu={H.nbPes}] Gathering KD-tree chunks")
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -1660,6 +1857,7 @@ def create_tree_structure_1311():
             for r in async_results:
                 r.get()
         signal.signal(signal.SIGTERM, H.flush)
+        pbar.close()
 
     # Change root (0 <= lvl < baselvl) firstchild
     firstchild = mem["firstchild_1311"]
@@ -1681,12 +1879,13 @@ def create_tree_structure_1311():
     if (H.verbose): print('total number of cells =',ncell)
     print(time.time()-ref, " seconds to create the tree structure")
 
-    H.deallocate('rmass_cell_1311', 'rsize_cell_1311', 'rpos_cell_1311',
-                 'rsister_1311', 'rfirstchild_1311', 'ncell_chunks_1311')
-
-    raise ValueError("stop")
+    H.deallocate(
+        'rmass_cell_1311', 'rsize_cell_1311', 'rpos_cell_1311',
+        'rsister_1311', 'rfirstchild_1311', 'ncell_chunks_1311',
+        )
+    # raise ValueError("stop")
     # -----------------------------------------------------
-
+    
 def _create_KDtree_worker(icpu, stack, inccell_root):
     pos_ref_0 = H.pos_ref_0
 
@@ -1743,7 +1942,7 @@ def _create_KDtree_worker(icpu, stack, inccell_root):
             size_cell[:old_shape[0]] = tmp[:]
             del tmp
 
-            tmp = np.zeros((3, ncellmx_old), dtype=np.float64)
+            tmp = np.zeros((3, ncellmx_old), dtype=np.float64); old_shape = tmp.shape
             pos_cell = np.empty((3, ncellmx), dtype=np.float64)
             pos_cell[:, :old_shape[1]] = tmp[:, :]
             del tmp
@@ -1791,18 +1990,17 @@ def _create_KDtree_worker(icpu, stack, inccell_root):
             if npart_this_node_out <= 0:
                 continue
             first_pos_this_node_out = int(first_pos_this_node + nsubcell_0[j0])
-            pos_this_node_out = pos_this_node[:3] + (pos_ref_0[:3, j0] * scale)
-            # ioct = oct(int(myoct,8)*8 + j0)
+            pos_this_node_out = pos_this_node[:] + (pos_ref_0[:, j0] * scale)
             stack.append((
                 nlevel + 1,
                 pos_this_node_out,
                 npart_this_node_out,
                 first_pos_this_node_out,
-                idmother_out
+                idmother_out,
             ))
 
     # Dump
-    datdump(pos_cell[:, inccell_root:_inccell], f'pos_cell_i{icpu:04d}.tmp')
+    datdump(pos_cell[:, inccell_root:_inccell].flatten(), f'pos_cell_i{icpu:04d}.tmp')
     datdump(mass_cell[inccell_root:_inccell], f'mass_cell_i{icpu:04d}.tmp')
     datdump(size_cell[inccell_root:_inccell], f'size_cell_i{icpu:04d}.tmp')
     datdump(sister[inccell_root:_inccell], f'sister_i{icpu:04d}.tmp')
@@ -1832,7 +2030,8 @@ def _gather_KDtree_worker(
         # Insert chunk cells
         fname = f"{key}_i{ichunk:04d}.tmp"
         arr = datload(fname, dtype=dtype)
-        if 'pos' in key: arr = arr.reshape(3,-1)
+        if 'pos' in key:
+            arr = arr.reshape(3,-1)
         if key == 'firstchild':
             # Correct firstchild indices of chunks
             arr = arr.copy()
@@ -1881,7 +2080,6 @@ def create_KDtree_root(baselevel=0):
     npartpercell = H.npartpercell
     nlevelmax    = H.nlevelmax
 
-    # ioct = oct(1)
     stacks.append( (nlevel, pos_this_node.copy(), npart_this_node, first_pos_this_node, idmother) )
 
     tmp = 8**np.arange(baselevel+1)
@@ -1915,12 +2113,12 @@ def create_KDtree_root(baselevel=0):
 
         # gather positions then compute icids
         icids = icellids(np.take(pos_10, idpart1s - 1, axis=0), pos_this_node=pos_this_node, mode=1)
+        argsort = np.argsort(icids, kind='mergesort')
         incsubcell_0 = np.bincount(icids, minlength=8).astype(np.int32)
-
         nsubcell_0 = np.empty(8, dtype=np.int32); nsubcell_0[0] = 0
         nsubcell_0[1:] = np.cumsum(incsubcell_0[:-1])
-
-        idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node] = idpart1s[np.argsort(icids, kind='mergesort')]
+        
+        idpart_1311[first_pos_this_node:first_pos_this_node+npart_this_node] = idpart1s[argsort]
 
         # ---------------- Push children (reverse order for same traversal) ----------------
         idmother_out = inccell
@@ -1933,7 +2131,6 @@ def create_KDtree_root(baselevel=0):
                 continue
             first_pos_this_node_out = int(first_pos_this_node + nsubcell_0[j0])
             pos_this_node_out = pos_this_node[:3] + (pos_ref_0[:3, j0] * scale)
-            # ioct = oct(int(myoct,8)*8 + j0)
             if ilvl < baselevel:
                 stacks.append((
                     nlevel + 1,
@@ -1955,6 +2152,7 @@ def create_KDtree_root(baselevel=0):
             ichunk += 1
         pbar.update(1)
                 
+    pbar.close()
     return chunks, np.asarray(npartchunks, dtype=np.int32)
 
 

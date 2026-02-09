@@ -407,6 +407,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
     H.allocate('pos_tmp_101', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_tmp_101', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_tmp_101', (H.npart,), dtype=np.float64)
+    H.massalloc = True
   
     ##### MultiProcessing Start #####
     # H.ncpu=4

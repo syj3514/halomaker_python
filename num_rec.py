@@ -277,13 +277,28 @@ def cubic(a1, a2, a3, a4):
 def spline(x):
 #=======================================================================
 #   Moved from `compute_neiKDtree_mod`
-
     if (x<=1.):
         ans=1.-1.5*x**2+0.75*x**3
     elif (x<=2.):
         ans=0.25*(2.-x)**3
     else:
         ans=0.
+    return ans
+
+#=======================================================================
+def splines(xarr):
+#=======================================================================
+    # if (x<=1.):
+    #     ans=1.-1.5*x**2+0.75*x**3
+    # elif (x<=2.):
+    #     ans=0.25*(2.-x)**3
+    # else:
+    #     ans=0.
+    ans = np.zeros_like(xarr)
+    mask1 = (xarr <= 1.0)
+    mask2 = (xarr > 1.0) & (xarr <= 2.0)
+    ans[mask1] = 1.0 - 1.5 * xarr[mask1]**2 + 0.75 * xarr[mask1]**3
+    ans[mask2] = 0.25 * (2.0 - xarr[mask2])**3
     return ans
 
 #=======================================================================
@@ -334,27 +349,27 @@ def icellids(xtests:np.ndarray, pos_this_node=None, mode=1):
     if mode==0:
         # Moved from `compute_neiKDtree_mod`
         is_positive = xtests >= 0
-        icellid = np.sum(is_positive * arr_for_icellids, axis=1, dtype=np.int8)
+        icellid = np.sum(is_positive * arr_for_icellids, axis=1, dtype=np.uint64)
         return icellid
     elif mode==1: # <--- this is the fastest
         if pos_this_node is None:
-            b = (xtests >= 0).astype(np.uint8, copy=False)
+            b = (xtests >= 0).astype(np.uint64, copy=False)
         else:
-            b = (xtests >= pos_this_node).astype(np.uint8, copy=False)
-        return (b @ arr_for_icellids).astype(np.uint8, copy=False)
+            b = (xtests >= pos_this_node).astype(np.uint64, copy=False)
+        return (b @ arr_for_icellids).astype(np.uint64, copy=False)
 
     elif mode==2:
         if pos_this_node is None:
             return (
-                (xtests[:, 0] >= 0).astype(np.uint8)
-                | ((xtests[:, 1] >= 0).astype(np.uint8) << 1)
-                | ((xtests[:, 2] >= 0).astype(np.uint8) << 2)
+                (xtests[:, 0] >= 0).astype(np.uint64)
+                | ((xtests[:, 1] >= 0).astype(np.uint64) << 1)
+                | ((xtests[:, 2] >= 0).astype(np.uint64) << 2)
             )
         else:
             return (
-                (xtests[:, 0] >= pos_this_node[0]).astype(np.uint8)
-                | ((xtests[:, 1] >= pos_this_node[1]).astype(np.uint8) << 1)
-                | ((xtests[:, 2] >= pos_this_node[2]).astype(np.uint8) << 2)
+                (xtests[:, 0] >= pos_this_node[0]).astype(np.uint64)
+                | ((xtests[:, 1] >= pos_this_node[1]).astype(np.uint64) << 1)
+                | ((xtests[:, 2] >= pos_this_node[2]).astype(np.uint64) << 2)
             )
 
 

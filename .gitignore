@@ -3,3 +3,8 @@ fort.log
 **/*.pyc
 test.py
 **/*.pickle
+ncontam_halos.dat
+resim_masses.dat
+struct_tree.dat
+tree_bricks*
+**/*.ipynb
