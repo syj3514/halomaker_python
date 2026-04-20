@@ -8,3 +8,4 @@ resim_masses.dat
 struct_tree.dat
 tree_bricks*
 **/*.ipynb
+**/__pycache__/
