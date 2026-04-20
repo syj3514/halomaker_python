@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 @njit
 def counting_argsort_8(keys):
@@ -187,6 +187,161 @@ def jacobi(a, nmax=500, itermax=50):
             z[ip] = 0.0
     raise RuntimeError(f"Too many iterations ({itermax}) in routine jacobi")
 
+def jacobi_gpt1(a, nmax=500, itermax=50, copy=True):
+    a = np.array(a, dtype=np.float64, copy=copy, order="C")
+    n = a.shape[0]
+
+    if a.ndim != 2 or n != a.shape[1]:
+        raise ValueError("`a` must be a square 2D array")
+    if n > nmax:
+        raise BufferError(f"n(={n}) is too large (nmax={nmax})")
+
+    b = np.diag(a).copy()
+    d = b.copy()
+    z = np.zeros(n, dtype=np.float64)
+    v = np.eye(n, dtype=np.float64)
+
+    nbinot = 0
+
+    for i in range(itermax):
+        # Same meaning as sum(abs(triu(a,1))) but without materializing triu(a,1)
+        sm = np.abs(a[np.triu_indices(n, k=1)]).sum()
+        if sm == 0.0:
+            return d, v
+
+        tresh = 0.2 * sm / (n * n) if i < 4 else 0.0
+
+        for ip in range(n - 1):
+            for iq in range(ip + 1, n):
+                a_ipiq = a[ip, iq]
+                g = 100.0 * abs(a_ipiq)
+
+                if (i > 4) and ((abs(d[ip]) + g) == abs(d[ip])) and ((abs(d[iq]) + g) == abs(d[iq])):
+                    a[ip, iq] = 0.0
+
+                elif abs(a_ipiq) > tresh:
+                    h = d[iq] - d[ip]
+
+                    if (abs(h) + g) == abs(h):
+                        t = a_ipiq / h
+                    else:
+                        theta = 0.5 * h / a_ipiq
+                        t = 1.0 / (abs(theta) + np.sqrt(1.0 + theta * theta))
+                        if theta < 0.0:
+                            t = -t
+
+                    c = 1.0 / np.sqrt(1.0 + t * t)
+                    s = t * c
+                    tau = s / (1.0 + c)
+                    h = t * a_ipiq
+
+                    z[ip] -= h
+                    z[iq] += h
+                    d[ip] -= h
+                    d[iq] += h
+                    a[ip, iq] = 0.0
+
+                    # for j in range(ip):
+                    if ip > 0:
+                        gvec = a[:ip, ip].copy()
+                        hvec = a[:ip, iq].copy()
+                        a[:ip, ip] = gvec - s * (hvec + gvec * tau)
+                        a[:ip, iq] = hvec + s * (gvec - hvec * tau)
+
+                    # for j in range(ip+1, iq):
+                    if iq - ip > 1:
+                        gvec = a[ip, ip + 1:iq].copy()
+                        hvec = a[ip + 1:iq, iq].copy()
+                        a[ip, ip + 1:iq] = gvec - s * (hvec + gvec * tau)
+                        a[ip + 1:iq, iq] = hvec + s * (gvec - hvec * tau)
+
+                    # for j in range(iq+1, n):
+                    if iq + 1 < n:
+                        gvec = a[ip, iq + 1:n].copy()
+                        hvec = a[iq, iq + 1:n].copy()
+                        a[ip, iq + 1:n] = gvec - s * (hvec + gvec * tau)
+                        a[iq, iq + 1:n] = hvec + s * (gvec - hvec * tau)
+
+                    # for j in range(n):
+                    gvec = v[:, ip].copy()
+                    hvec = v[:, iq].copy()
+                    v[:, ip] = gvec - s * (hvec + gvec * tau)
+                    v[:, iq] = hvec + s * (gvec - hvec * tau)
+
+                    nbinot += 1
+
+        b += z
+        d = b.copy()
+        z.fill(0.0)
+
+    raise RuntimeError(f"Too many iterations ({itermax}) in routine jacobi")
+
+
+def jacobi_gemini1(a_in, itermax=50):
+    a = a_in.copy().astype(float)
+    n = a.shape[0]
+    v = np.eye(n)
+    
+    for i in range(itermax):
+        # 상삼각 성분 중 절댓값이 가장 큰 원소의 위치 탐색 (Pivot 선택)
+        # 3x3이므로 직접 인덱싱이 효율적일 수 있으나 확장성을 위해 triu 유지
+        upper_tri_indices = np.triu_indices(n, k=1)
+        abs_upper = np.abs(a[upper_tri_indices])
+        sm = np.sum(abs_upper)
+        
+        # 수렴 조건: 비대각 성분의 합이 충분히 작을 때
+        if sm < 1e-15:
+            return np.diag(a), v
+
+        # 피벗 선택 (가장 큰 값을 가진 index 추출)
+        idx = np.argmax(abs_upper)
+        p, q = upper_tri_indices[0][idx], upper_tri_indices[1][idx]
+        
+        apq = a[p, q]
+        if abs(apq) < 1e-15:
+            continue
+
+        # 회전각 계산
+        h = a[q, q] - a[p, p]
+        if abs(h) + abs(apq) * 100 == abs(h): # Underflow 방지
+            t = apq / h
+        else:
+            theta = 0.5 * h / apq
+            t = 1.0 / (np.abs(theta) + np.sqrt(1.0 + theta**2))
+            if theta < 0: t = -t
+            
+        c = 1.0 / np.sqrt(1 + t**2)
+        s = t * c
+        tau = s / (1.0 + c)
+        
+        # 행렬 원소 업데이트 (벡터화)
+        h = t * apq
+        a[p, p] -= h
+        a[q, q] += h
+        a[p, q] = 0.0
+        
+        # p행/열과 q행/열의 다른 원소들 업데이트
+        for j in range(n):
+            if j != p and j != q:
+                # 대칭 행렬 성질을 이용하되, 인덱스 관리를 위해 임시 저장
+                # a[j, p]와 a[p, j]는 동일함 (대칭 가정)
+                g = a[min(j, p), max(j, p)]
+                h = a[min(j, q), max(j, q)]
+                
+                new_g = g - s * (h + g * tau)
+                new_h = h + s * (g - h * tau)
+                
+                a[min(j, p), max(j, p)] = new_g
+                a[min(j, q), max(j, q)] = new_h
+
+        # 고유벡터 행렬 업데이트
+        v_p = v[:, p].copy()
+        v_q = v[:, q].copy()
+        v[:, p] = v_p - s * (v_q + v_p * tau)
+        v[:, q] = v_q + s * (v_p - v_q * tau)
+
+    raise RuntimeError(f"최대 반복 횟수({itermax}) 내에 수렴하지 않았습니다.")
+
 #***********************************************************************
 # subroutine `indexx` can be replaced by `np.argsort`
 
@@ -288,17 +443,34 @@ def spline(x):
 #=======================================================================
 def splines(xarr):
 #=======================================================================
-    # if (x<=1.):
-    #     ans=1.-1.5*x**2+0.75*x**3
-    # elif (x<=2.):
-    #     ans=0.25*(2.-x)**3
-    # else:
-    #     ans=0.
     ans = np.zeros_like(xarr)
     mask1 = (xarr <= 1.0)
-    mask2 = (xarr > 1.0) & (xarr <= 2.0)
-    ans[mask1] = 1.0 - 1.5 * xarr[mask1]**2 + 0.75 * xarr[mask1]**3
-    ans[mask2] = 0.25 * (2.0 - xarr[mask2])**3
+    x1 = xarr[mask1]
+    x12 = x1*x1
+    mask2 = (~mask1) & (xarr <= 2.0)
+    y = 2 - xarr[mask2]
+    ans[mask1] = 1.0 - 1.5*x12 + 0.75*x12*x1
+    ans[mask2] = 0.25 * y*y*y
+    return ans
+
+@njit(cache=True, fastmath=True, parallel=True)
+def splines_numba(xarr):
+    n, m = xarr.shape
+    ans = np.empty_like(xarr)
+
+    for ipar0 in prange(n):
+        for i in range(m):
+            x = xarr[ipar0, i]
+            if x <= 1.0:
+                x2 = x * x
+                ans[ipar0, i] = 1.0 - 1.5 * x2 + 0.75 * x2 * x
+            elif x <= 2.0:
+                y = 2.0 - x
+                y2 = y * y
+                ans[ipar0, i] = 0.25 * y2 * y
+            else:
+                ans[ipar0, i] = 0.0
+
     return ans
 
 #=======================================================================

@@ -332,7 +332,7 @@ def stop(): raise ValueError("Stop")
 print_prefix = "    "
 GLOBAL = Manager()
 ncall = GLOBAL.Value('i', 0)
-# ncall_create_nodes = GLOBAL.Value('i', 0)
+ncall_create_nodes = GLOBAL.Value('i', 0)
 ntest = 0
 inccell = 0
 ind_deepcount = 0
@@ -456,18 +456,22 @@ def change_pos_1310():
 #=======================================================================
     H.npart    = H.nbodies
     H.epsilon  = H.fudgepsilon*H.xlong/H.npart**(1/3)
-    if H.SCIPY: mem['pos_10'] += 0.5
+    # mem['pos_10']      = mem['pos_10'] * H.boxsize2
+    if H.SCIPY:
+        mem['pos_10'] += 0.5
     mem['pos_10']      *= H.boxsize2
 
 #=======================================================================
 def change_pos_back_1315():
 #=======================================================================
     mem['pos_10'] /= H.boxsize2
-    if H.SCIPY: mem['pos_10'] -= 0.5
+    if H.SCIPY:
+        mem['pos_10'] -= 0.5
 
 #=======================================================================
 def count_halos_1316():
 #=======================================================================
+    # integer(kind=4) :: inode
     H.nb_of_halos = 0
     for inode1 in frange(1,H.nnodes):
         if(H.node_0[inode1].level==1): H.nb_of_halos += 1
@@ -475,6 +479,8 @@ def count_halos_1316():
 #=======================================================================
 def select_halos_1317():
 #=======================================================================
+    #   integer(kind=4) :: inode, ihalo, ipar
+    #   integer(kind=4) :: node_to_halo(H.nnodes)
     node_to_halo = np.zeros(H.nnodes, dtype=np.int32)-1
 
     # counting number of halos
@@ -706,6 +712,13 @@ def make_linked_node_list():
 
 def _compute_mean_density_worker(ipar1, poshere):
     dist2_0, iparnei = walk_tree_norec_131200(ipar1, poshere) # <---- Main bottleneck
+    if ipar1==1:
+        print("walk_tree_result")
+        print("walk_tree_result")
+        print("walk_tree_result")
+        print(ipar1)
+        print(dist2_0)
+        print(iparnei)
     if(np.sum(iparnei)==0):
         print(ipar1)
         print(dist2_0)
@@ -735,7 +748,7 @@ def compute_mean_density_and_np_1312_scipy(tree):
 
     # Density
     rs = dist1_0s[:,H.nvoisins]*0.5
-    imass = mem['mass_10']# if(H.massalloc) else H.massp
+    imass = H.massp
 
     tmp = dist1_0s[:,1:H.nvoisins+1] / rs[:,None]
     # splined = splines(tmp)
@@ -760,6 +773,12 @@ def compute_mean_density_and_np_1312():
     H.allocate('iparneigh_1312',(H.nhop,H.npart), dtype=np.int32)
     H.allocate('density_1312',H.npart, dtype=np.float64)
 
+    ######################################################
+    # What I need?
+    # - density_1312
+    # - iparneigh_1312
+    # Let's get from fortran (using f2py)
+    ######################################################
     DEBUG=False
     if (DEBUG)and(os.path.exists('density_1312.tmp')):
         print(f'{print_prefix}Loading density and iparneigh from tmp files...')
@@ -829,8 +848,8 @@ def compute_mean_density_and_np_1312():
         H.deallocate('sister_1311')
         H.deallocate('firstchild_1311')
 
-        # datdump(mem['iparneigh_1312'].flatten(), 'iparneigh_1312.tmp')
-        # datdump(mem['density_1312'], 'density_1312.tmp')
+        datdump(mem['iparneigh_1312'].flatten(), 'iparneigh_1312.tmp')
+        datdump(mem['density_1312'], 'density_1312.tmp')
     print(f"{print_prefix}--> {time.time()-_ref:.2f} seconds to compute mean density")
     return
 
@@ -986,13 +1005,19 @@ def create_group_tree_1314():
     rsquare             = 0
     densmoy             = 0
     truemasstmp         = 0
-
+    # ## Original
+    # ref = time.time()
+    # for igroup1 in frange(1,H.ngroups):
+    #     posg,masstmp,igroupref,posref,rsquare,densmoy,truemasstmp = treat_particles_13141(igroup1,rhot,posg,masstmp,igroupref,posref, rsquare,densmoy,truemasstmp)
+    #     mass_loc += masstmp
+    #     truemass += truemasstmp
+    ## Simplified
     igrouppart = mem['igrouppart_1313']
     mass = mem['mass_10']
     groupmask = igrouppart > 0
     _ipar0 = np.where(groupmask)[0]
     mass_loc = len(_ipar0)
-    truemass = np.sum(mass[_ipar0])# if (H.massalloc) else H.massp*mass_loc
+    truemass = H.massp*mass_loc
 
     H.node_0[inode].mass          = mass_loc
     H.node_0[inode].truemass      = truemass
@@ -1009,8 +1034,9 @@ def create_group_tree_1314():
     mem['idgroup_1314'][:] = np.arange(1, H.ngroups+1)
     mem['igroupid_1314'][:] = np.arange(1, H.ngroups+1)
 
-    # H.allocate('timer_1314', 10, dtype=np.float64)
-    # mem['timer_1314'][:]=0
+    # MP Test
+    H.allocate('timer_1314', 10, dtype=np.float64)
+    mem['timer_1314'][:]=0
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     print(f"{print_prefix}Create nodes ...")
     cref = time.time()
@@ -1018,10 +1044,10 @@ def create_group_tree_1314():
         create_nodes_13143(rhot, inode, igrA, igrB, pool=global_pool)
     print(f"{print_prefix}--> {time.time()-cref:.6f} seconds to create nodes")
     signal.signal(signal.SIGTERM, H.flush)
-    # for i, itime in enumerate(mem['timer_1314']):
-    #     print(f"{print_prefix}    Timer {i}: {itime:.6f} seconds")
-
-    H.deallocate('timer_1314')
+    for i, itime in enumerate(mem['timer_1314']):
+        print(f"{print_prefix}    Timer {i}: {itime:.6f} seconds")
+    # Original
+    # create_nodes_13143(rhot,inode,igrA,igrB)
     H.deallocate('igrouppart_1313')
     H.deallocate('idgroup_1314')
     H.deallocate('color_1314')
@@ -1037,6 +1063,8 @@ def create_group_tree_1314():
 def _create_nodes_worker(args):
     icolor0, igrA, igrB, rhot = args
     posg=np.zeros(3)
+    # posgtmp = np.empty(3, dtype=np.float64)
+    # posref = np.empty(3, dtype=np.float64)
     posref = None
     mass_loc=0
     truemass=0
@@ -1046,12 +1074,20 @@ def _create_nodes_worker(args):
     mass_comp=0
     densmoy_comp_max=-1.
     igroupref=0
+    # masstmp = 0
+    # rsquaretmp = 0
+    # densmoytmp = 0
+    # truemasstmp = 0
 
     idgroup = mem['idgroup_1314']
     densityg = mem['densityg_1313']
     for igr1 in frange(igrA, igrB):
         igroup1=idgroup[igr1-1]
         densmaxgroup=max(densmaxgroup,densityg[igroup1-1])
+        # posgtmp,masstmp,igroupref,posref,rsquaretmp,densmoytmp,truemasstmp = treat_particles_new_13141(
+        #     igroup1,rhot,
+        #     posgtmp,masstmp,igroupref,posref,
+        #     rsquaretmp,densmoytmp,truemasstmp)
         posgtmp,masstmp,igroupref,posref,rsquaretmp,densmoytmp,truemasstmp = treat_particles_new_13141(
             igroup1,rhot,
             igroupref,posref)
@@ -1064,6 +1100,12 @@ def _create_nodes_worker(args):
         mass_comp=max(mass_comp,masstmp)
         if (masstmp > 0): densmoy_comp_max=max(densmoy_comp_max, densmoytmp/(1+H.fudge/np.sqrt(masstmp)))
 
+    # massg_val=mass_loc
+    # truemassg_val=truemass
+    # posgg_val=posg[:3]
+    # densmaxg_val=densmaxgroup
+    # densmoy_comp_maxg_val=densmoy_comp_max
+    # mass_compg_val=mass_comp
     rsquare_val=np.sqrt(np.abs((truemass*rsquareg-(posg[0]**2+posg[1]**2+posg[2]**2) )/ truemass**2 ))
     densmoy_val=densmoyg/mass_loc
 
@@ -1082,8 +1124,12 @@ def _create_nodes_worker(args):
 #=======================================================================
 def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
 #=======================================================================
-    global ncall, icolor_select#, ncall_create_nodes
-    # timer=mem['timer_1314']; ref = time.time(); ith = 0
+    global ncall, icolor_select, ncall_create_nodes
+
+    ncall_create_nodes.value += 1
+    # posfin = np.empty(3, dtype=np.float64)
+
+    timer=mem['timer_1314']; ref = time.time(); ith = 0
     mem['color_1314'][igrA-1:igrB] = 0
     densityg = mem['densityg_1313']
     # Percolate the groups
@@ -1119,8 +1165,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                     # We do not need this saddle anymore 
                     # (and use the fact that saddles are ranked in decreasing order)
                     me.nhnei -= 1
-    # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-    # # 12.54 sec
+    timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+    # 12.54 sec
 
     # We select only groups where we are sure of having at least one
     # particle above the threshold density rhot
@@ -1137,8 +1183,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
     if (igrpos_0[icolor_select]-igrA+1 == 0):
         print(f'{print_prefix}ERROR in create_nodes :')
         raise ValueError('All subgroups are below the threshold.')    
-    # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-    # # 1.39 sec
+    timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+    # 1.39 sec
 
     ## Original Loop
     igrinc[:icolor_select]=0
@@ -1160,8 +1206,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
     igrmask = igrinc>0
     nmask = np.sum(igrmask)
     igrposnew_0[1:1+nmask] = igrpos_0[1:][igrmask]
-    # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-    # # 3.50 sec
+    timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+    # 3.50 sec
 
     del igrpos_0
     del igrinc
@@ -1177,8 +1223,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
     densmoy = np.empty(inc_color_tot, dtype=np.float64)
     ifok = np.empty(inc_color_tot, dtype=np.bool_)
     ifok[:inc_color_tot]=False
-    # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-    # # 0.17 sec
+    timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+    # 0.17 sec
 
     DEBUG = False
     if H.nbPes==1 or DEBUG or (pool is None):
@@ -1193,7 +1239,7 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
             massg[idx], truemassg[idx], posgg[:3, idx], densmaxg[idx], densmoy_comp_maxg[idx], mass_compg[idx], rsquare[idx], densmoy[idx], ifok[idx] = res[1:]
         # if H.verbose: iterator.close()
     else:
-        callback=None
+        pbar=None; callback=None
         # if H.verbose:
         #     pbar = tqdm(total=inc_color_tot, desc=f'{print_prefix}[nbPes={H.nbPes}] Gathering same color', mininterval=0.5, leave=True)
         #     callback = lambda _: pbar.update()
@@ -1211,8 +1257,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
         # if H.verbose: pbar.close()
     nsisters = np.sum(ifok)
     icolor_ref = np.where(ifok)[0][-1] if nsisters > 0 else 0
-    # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-    # # 96.66 sec
+    timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+    # 96.66 sec
 
     if (nsisters>1):
         isisters=0
@@ -1239,6 +1285,7 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                 posfin = posgg[:3,icolor0]/truemassg[icolor0]
                 H.node_0[H.nnodes].radius=rsquare[icolor0]
                 H.node_0[H.nnodes].density=densmoy[icolor0]
+                # posfin = posfin - np.round(posfin / H.boxarr) * H.boxarr
                 posfin -= np.round(posfin / H.boxarr) * H.boxarr
                 H.node_0[H.nnodes].position[:3]=posfin[:3]
                 H.node_0[H.nnodes].rho_saddle=rhot
@@ -1257,8 +1304,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                 #     print(f'{print_prefix}*****************************************')
         H.node_0[inode].firstchild=H.nnodes
         inodeout=inodetmp
-        # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-        # # 0.21 sec
+        timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+        # 0.21 sec
         for icolor0 in range(inc_color_tot):
             if (ifok[icolor0]):
                 ref = time.time()
@@ -1267,8 +1314,8 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                 for igr1 in frange(igrAout, igrBout):
                     paint_particles_new_131431(idgroup[igr1-1],inodeout,rhot)
                 rhotout=rhot*(1+H.fudge/np.sqrt(mass_compg[icolor0]))
-                # timer[-1] += time.time()-ref
-                # # 5.69 sec
+                timer[-1] += time.time()-ref
+                # 5.69 sec
                 if (igrBout!=igrAout):
                     create_nodes_13143(rhotout,inodeout,igrAout,igrBout, pool=pool)
                 else:
@@ -1279,14 +1326,14 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
         rhotout=rhot*(1+H.fudge/np.sqrt(mass_compg[icolor_ref]))
         igrAout=igrposnew_0[0]+1
         igrBout=igrposnew_0[inc_color_tot]
-        # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-        # # 0.21 sec
+        timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+        # 0.21 sec
         if (igrBout!=igrAout): create_nodes_13143(rhotout,inodeout,igrAout,igrBout, pool=pool)
         else: H.node_0[inode].firstchild=0
     else:
         H.node_0[inode].firstchild=0
-        # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
-        # # 0.21 sec
+        timer[ith] += time.time()-ref; ith+=1; ref=time.time()
+        # 0.21 sec
 
 #=======================================================================
 def paint_particles_131431(igroup1,inode,rhot):
@@ -1317,7 +1364,7 @@ def treat_particles_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densm
     idpart = mem['idpart_1311']
     firstpart = mem['firstpart_1313']
     pos = mem['pos_10']
-    mass = mem['mass_10']# if(H.massalloc) else H.massp
+    mass = H.massp
     while (ipar1>0):
         if (density[ipar1-1] > rhot):
             if ( not first_good):
@@ -1326,24 +1373,22 @@ def treat_particles_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densm
                     igroupref=igroup1
                 first_good=True
                 firstpart[igroup1-1]=ipar1
-                if strict:
-                    densmin=density[ipar1-1]
-                    densmax=densmin
+                densmin=density[ipar1-1]
+                densmax=densmin
             else:
                 idpart[iparold1-1]=ipar1
                 
             iparold1=ipar1
             imass += 1
-            xmasspart = mass[ipar1-1]# if(H.massalloc) else H.massp
+            xmasspart = mass
             truemass += xmasspart
             dpos = pos[ipar1-1,:3] - posref[:3]
             dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos) + posref
             posg[:3] += dpos[:3]*xmasspart
             rsquare += xmasspart*np.sum(dpos[:3]**2)
             densmoy += density[ipar1-1]
-            if strict:
-                densmax = max(densmax,density[ipar1-1])
-                densmin = min(densmin,density[ipar1-1])
+            densmax = max(densmax,density[ipar1-1])
+            densmin = min(densmin,density[ipar1-1])
         ipar1=idpart[ipar1-1]
     if ( not first_good): firstpart[igroup1-1]=0
 
@@ -1356,8 +1401,10 @@ def treat_particles_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densm
 
 #=======================================================================
 # def treat_particles_new_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densmoy,truemass):
-def treat_particles_new_13141(igroup1,rhot,igroupref,posref, strict=False):
+def treat_particles_new_13141(igroup1,rhot,igroupref,posref):
 #=======================================================================
+    # posg[:] = 0
+    # imass=0; rsquare=0; densmoy=0; truemass=0
     density = mem['density_1312']
     firstpart = mem['firstpart_1313']
     
@@ -1369,24 +1416,24 @@ def treat_particles_new_13141(igroup1,rhot,igroupref,posref, strict=False):
     if (mask.any())and(firstpart[igroup1-1]>0):
         idpart = mem['idpart_1311']
         pos = mem['pos_10']
-        mass = mem['mass_10']# if(H.massalloc) else H.massp
+        mass = H.massp
         dens = dens[mask]
         ipar1s = _ipar1s[mask]
         firstpart[igroup1-1] = ipar1s[-1]
         if igroupref==0:
             igroupref = igroup1
+            # posref[:3]=pos[ipar1s[-1]-1,:3]
             posref=pos[ipar1s[-1]-1,:3]
-        if strict:
-            densmin, densmax = np.min(dens), np.max(dens)
+        densmin, densmax = np.min(dens), np.max(dens)
 
         imass = len(ipar1s)
-        truemass = np.sum(mass[ipar1s-1])# if (H.massalloc) else H.massp*imass
+        truemass = H.massp*imass
         dpos = pos[ipar1s-1,:3] - posref[:3]
         boxarr = H.boxarr
         dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos) + posref
         # posg[:3] += np.sum(dpos[:,:3]*mass[ipar1s-1][:,None], axis=0) if (H.massalloc) else np.sum(dpos[:,:3]*H.massp, axis=0)
-        posg = np.sum(dpos[:,:3]*mass[ipar1s-1][:,None], axis=0)# if (H.massalloc) else np.sum(dpos[:,:3]*H.massp, axis=0)
-        rsquare = np.sum(mass[ipar1s-1][:,None]*np.sum(dpos[:,:3]**2, axis=1)[:,None])# if (H.massalloc) else np.sum(H.massp*np.sum(dpos[:,:3]**2, axis=1))
+        posg = np.sum(dpos[:,:3]*H.massp, axis=0)
+        rsquare = np.sum(H.massp*np.sum(dpos[:,:3]**2, axis=1))
         densmoy = np.sum(dens)
 
         idpart[ipar1s[1:]-1] = ipar1s[:-1] # <--BOOKMARK: not sure if this is correct
@@ -1398,11 +1445,10 @@ def treat_particles_new_13141(igroup1,rhot,igroupref,posref, strict=False):
     if not mask.all():
         set_group_members(_ipar1s[~mask], 0)
 
-    if strict:
-        if ( (densmin<=rhot)or(densmax!=mem['densityg_1313'][igroup1-1]) ):
-            print(f'{print_prefix}ERROR in treat_particles')
-            print(f'{print_prefix}igroup1, densmax, rhot=',igroup1,mem['densityg_1313'][igroup1-1],rhot)
-            raise ValueError('denslow, denshigh    =',densmin,densmax)
+    if ( (densmin<=rhot)or(densmax!=mem['densityg_1313'][igroup1-1]) ):
+        print(f'{print_prefix}ERROR in treat_particles')
+        print(f'{print_prefix}igroup1, densmax, rhot=',igroup1,mem['densityg_1313'][igroup1-1],rhot)
+        raise ValueError('denslow, denshigh    =',densmin,densmax)
     return posg,imass,igroupref,posref,rsquare,densmoy,truemass
 
 #=======================================================================
@@ -1500,7 +1546,91 @@ def compute_saddle_list_13140():
     iparneigh = mem['iparneigh_1312']
     density = mem['density_1312']
     groupmask = igrouppart > 0
+    # # ---------------------------------------------------------
+    # ## Original Loop
+    # # First count the number of neighbourgs for each group to H.allocate
+    # # arrays isad_in,isad_out,rho_saddle_gr
+    # for igroupA0 in range(H.ngroups):
+    #     ineig=0
+    #     ipar1=mem['firstpart_1313'][igroupA0]
+    #     # Loop on all the members of the group
+    #     while (ipar1>0):
+    #         for idist0 in range(H.nhop):
+    #             ipar2=mem['iparneigh_1312'][idist0,ipar1-1]
+    #             igroupB1=mem['igrouppart_1313'][ipar2-1]
+    #             # we test that we are in a group (i.e. that mem['density_1312'][ipar] >= rho_hold
+    #             # and that this group is different from the one we are sitting on
+    #             if( (igroupB1>0)and(igroupB1 != igroupA0+1) ):
+    #                 if ( not touch[igroupB1-1]):
+    #                     ineig += 1
+    #                     touch[igroupB1-1]=True
+    #                     listg[ineig-1]=igroupB1
+    #         # Next member
+    #         ipar1 = mem['idpart_1311'][ipar1-1]
+    #     # Reinitialize touch
+    #     for inA0 in range(ineig):
+    #         igroupB1=listg[inA0]
+    #         touch[igroupB1-1]=False
+    #     # Allocate the nodes 
+    #     H.group[igroupA0].nhnei=ineig
+    #     ineigal=max(ineig,1)
+    #     H.group[igroupA0].isad_gr = np.zeros(ineigal, dtype=np.int32)
+    #     H.group[igroupA0].rho_saddle_gr = np.zeros(ineigal, dtype=np.float64)
+    # # # ---------------------------------------------------------
+    # if (H.verbose): print(f'{print_prefix}Compute lists of neighbourgs and saddle points...')
 
+    # # ---------------------------------------------------------
+    # ## Original Loop
+    # ref = time.time()
+    # # arrays isad_in,isad_out,rho_saddle_gr
+    # for igroupA0 in range(H.ngroups):
+    #     # No calculation necessary if no neighbourg
+    #     neig=H.group[igroupA0].nhnei
+    #     if(neig>0):
+    #         ineig=0
+    #         ipar1=firstpart[igroupA0]
+    #         rho_sad = np.zeros(neig, dtype=np.float64)
+    #         # Loop on all the members of the group
+    #         while (ipar1>0):
+    #             density1=density[ipar1-1]
+    #             for idist0 in range(H.nhop):
+    #                 ipar2=iparneigh[idist0,ipar1-1]
+    #                 igroupB1=igrouppart[ipar2-1]
+    #                 # we test that we are in a group (i.e. that density[ipar] >= rho_hold
+    #                 # and that this group is different from the one we are sitting on
+    #                 if( (igroupB1>0)and(igroupB1 != igroupA0+1) ):
+    #                     density2=density[ipar2-1]
+    #                     if ( not touch[igroupB1-1] ):
+    #                         ineig += 1
+    #                         touch[igroupB1-1]=True
+    #                         listg[igroupB1-1]=ineig
+    #                         rho_sad12=min(density1,density2)
+    #                         rho_sad[ineig-1]=rho_sad12
+    #                         H.group[igroupA0].isad_gr[ineig-1]=igroupB1
+    #                     else:
+    #                         ineig2=listg[igroupB1-1]
+    #                         rho_sad12=min(density1,density2)
+    #                         rho_sad[ineig2-1]=max(rho_sad[ineig2-1],rho_sad12)
+    #             # Next member
+    #             ipar1=mem['idpart_1311'][ipar1-1]
+    #         if (ineig!=neig):
+    #             # Consistency checking
+    #             print(f'{print_prefix}ERROR in compute_saddle_list :')
+    #             print(f'{print_prefix}The number of neighbourgs does not match.')
+    #             raise ValueError('ineig, neig =',ineig,neig)
+
+    #         H.group[igroupA0].rho_saddle_gr[:ineig]=rho_sad[:ineig]
+    #         del rho_sad
+    #         # Reinitialize touch
+    #         for inA0 in range(ineig):
+    #             igroupB1=H.group[igroupA0].isad_gr[inA0]
+    #             touch[igroupB1-1]=False
+    # print(f"{print_prefix}Original loop time: {time.time() - ref:.2f} seconds")
+    # for igroupA0 in range(10):
+    #     print(f"{print_prefix} > ({igroupA0}) {H.group[igroupA0].nhnei} {H.group[igroupA0].isad_gr}, rho_saddle_gr={H.group[igroupA0].rho_saddle_gr}")
+
+    # ---------------------------------------------------------
+    # Vectorized Loop
     DEBUG=False
     if DEBUG: ref = time.time()
     _ipar0 = np.arange(H.npart)
@@ -1543,6 +1673,7 @@ def compute_saddle_list_13140():
             nhneis[icpu] = result[0]
             isad_grs[icpu] = result[1]
             rho_saddle_grs[icpu] = result[2]
+        
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         with Pool(processes=H.nbPes) as pool:
             results = []
@@ -1560,7 +1691,7 @@ def compute_saddle_list_13140():
                 results.append(res)
             for res in results:
                 res.get()
-        signal.signal(signal.SIGTERM, H.flush)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
         icpu = 0; i1 = 0; cursor = 0
         _nhneis = nhneis[icpu]
@@ -1584,9 +1715,67 @@ def compute_saddle_list_13140():
 
     del touch
     del listg
-    
 
     if (H.verbose): print(f'{print_prefix}    Establish symmetry in connections...')
+    # # ---------------------------------------------------------
+    # ## Original Loop
+    # # Total number of connections count
+    # icon_count=0
+    # # Destroy the connections between 2 groups which are not symmetric
+    # # This might be rather slow and might be discarded later
+    # idestroy=0
+    # for igroupA0 in range(H.ngroups):
+    #     if (H.group[igroupA0].nhnei>0):
+    #         for inA0 in range(H.group[igroupA0].nhnei):
+    #             exist=False
+    #             igroupB1=H.group[igroupA0].isad_gr[inA0]
+    #             if (igroupB1>0):
+    #                 for inB0 in range(H.group[igroupB1-1].nhnei):
+    #                     # Mutual connection found
+    #                     if (H.group[igroupB1-1].isad_gr[inB0] == igroupA0+1):
+    #                         exist=True
+    #                         rho_sad12=min(H.group[igroupB1-1].rho_saddle_gr[inB0], H.group[igroupA0].rho_saddle_gr[inA0])
+    #                         H.group[igroupB1-1].rho_saddle_gr[inB0]=rho_sad12
+    #                         H.group[igroupA0].rho_saddle_gr[inA0]=rho_sad12
+    #             if ( not exist):
+    #                 H.group[igroupA0].isad_gr[inA0]=0
+    #                 idestroy += 1
+    #             else:
+    #                 icon_count += 1
+    # if (H.verbose): print(f'{print_prefix}Number of connections removed :',idestroy)
+    # if (H.verbose): print(f'{print_prefix}Total number of connections remaining :',icon_count)
+
+    # if (H.verbose): print(f'{print_prefix}Rebuild groups with undesired connections removed...')
+    # # Rebuild the group list correspondingly with the connections removed
+    # # And sort the list of saddle points
+    # for igroupA0 in range(H.ngroups):
+    #     neig=H.group[igroupA0].nhnei
+    #     if (neig>0):
+    #         rho_sad = np.zeros(neig, dtype=np.float64)
+    #         isad = np.zeros(neig, dtype=np.int32)
+    #         new_ineig=0
+    #         for inA0 in range(neig):
+    #             igroupB1=H.group[igroupA0].isad_gr[inA0]
+    #             if (igroupB1>0):
+    #                 rho_sad[new_ineig]=H.group[igroupA0].rho_saddle_gr[inA0]
+    #                 isad[new_ineig]=igroupB1
+    #                 new_ineig += 1
+
+    #         H.group[igroupA0].isad_gr = None
+    #         H.group[igroupA0].rho_saddle_gr = None
+    #         ineigal=max(new_ineig,1)
+    #         H.group[igroupA0].isad_gr = np.zeros(ineigal, dtype=np.int32)
+    #         H.group[igroupA0].rho_saddle_gr = np.zeros(ineigal, dtype=np.float64)
+    #         H.group[igroupA0].nhnei=new_ineig
+    #         if (new_ineig>0):
+    #             # sort the saddle points by decreasing order
+    #             indx = np.argsort(rho_sad[:new_ineig])
+    #             H.group[igroupA0].isad_gr = isad[indx]
+    #             H.group[igroupA0].rho_saddle_gr = rho_sad[indx]
+    #         del rho_sad
+    #         del isad
+    # # ---------------------------------------------------------
+    ## Faster Loop
     whereIam_dict = [{} for _ in range(H.ngroups)]
     for igroupA0 in range(H.ngroups):
         me = H.group[igroupA0]
@@ -1629,7 +1818,6 @@ def compute_saddle_list_13140():
             me.tmp = (new_nhnei, new_isad_gr, new_rho_saddle_gr)
             idestroy += mynhnei - new_nhnei
             icon_count += new_nhnei
-
     for igroupA0 in range(H.ngroups):
         me = H.group[igroupA0]
         if me.nhnei > 0:
@@ -1653,8 +1841,8 @@ def compute_density_13121(ipar1,dist2_0,iparnei):
 #=======================================================================
     # Vectorized version
     r = np.sqrt(dist2_0[H.nvoisins]) * 0.5
-    mneighs = mem['mass_10'][iparnei - 1]
-    mmy = mem['mass_10'][ipar1 - 1]
+    mneighs = H.massp
+    mmy = H.massp
     contrib = np.sum(mneighs * splines(np.sqrt(dist2_0[1:H.nvoisins+1]) / r)) + mmy
     mem['density_1312'][ipar1-1]=(H.xlong*H.ylong*H.zlong)*contrib /(H.pi*r**3)
 
@@ -1689,10 +1877,13 @@ def walk_tree_norec_131200(iparid1,poshere):
     '''
     Non-recursive version of walk_tree_131200.
     '''
+    # dist2_0 = np.full(H.nvoisins+1, H.bignum, dtype=np.float64)
+    # dist2_0[0]=0.0
     dist2_0 = np.full(H.nvoisins, H.bignum, dtype=np.float64)
     iparnei = np.zeros(H.nvoisins, dtype=np.int32)
     icellidin1 = 1
     # Current Information
+    # maxdist = dist2_0[H.nvoisins]
     maxdist = dist2_0[H.nvoisins-1]
     boxarr = H.boxarr
     boxarrT = boxarr[:, np.newaxis]
@@ -1705,12 +1896,13 @@ def walk_tree_norec_131200(iparid1,poshere):
     mass_cell = mem['mass_cell_1311']
     pos = mem['pos_10']
     idpart = mem['idpart_1311']
+    # firstchild[icellid_out1-1]<0
 
     stack = [(icellidin1, 0.0)]
     while stack:
         icellid, idiscell = stack.pop()
         if idiscell >= maxdist: continue
-        icell_identity1 = icellid
+        icell_identity1 = icellid#firstchild[icellid-1]
         ifirst = firstchild[icell_identity1-1]
         # Am I leaf or not??
         if ifirst < 0:
@@ -1719,6 +1911,8 @@ def walk_tree_norec_131200(iparid1,poshere):
                 
                 first_pos_this_node=-ifirst-1 # First particle index
                 mynpart = mass_cell[icell_identity1-1]
+                # ----------------------------------------------------
+                # [Development - vectorized version]
                 myparts = idpart[first_pos_this_node : first_pos_this_node+mynpart]
                 if iparid1 in myparts:
                     myparts = myparts[myparts != iparid1]
@@ -1728,12 +1922,16 @@ def walk_tree_norec_131200(iparid1,poshere):
                 dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos)
                 distance2p = np.sum(dpos*dpos, axis=1)
                 dmask = distance2p < maxdist
+                # if distance2p.min() < maxdist:
                 if np.any(dmask):
                     # Merge and sort `dist2_0`
+                    # tmp = np.concatenate( (dist2_0[1:], distance2p[dmask]) )
                     tmp = np.concatenate( (dist2_0, distance2p[dmask]) )
                     partitioned_indices = np.argpartition(tmp, H.nvoisins)[:H.nvoisins]
                     ordk = np.argsort(tmp[partitioned_indices])
                     partitioned_indices = partitioned_indices[ordk]
+                    # tmp = tmp[partitioned_indices]
+                    # dist2_0[0] = 0.0; dist2_0[1:] = tmp; maxdist = dist2_0[H.nvoisins]
                     dist2_0[:] = tmp[partitioned_indices]; maxdist = dist2_0[H.nvoisins-1]
                     # Merge and sort `iparnei`
                     tmp = np.concatenate( (iparnei, myparts[dmask]) )
@@ -1764,10 +1962,13 @@ def walk_tree_norec_131200(iparid1,poshere):
             distance2s = distance2s[sel]
             icell_identity1s = icell_identity1s[sel]
             argsort = np.argsort(distance2s)
+            # discell2_0 = np.empty(distance2s.size + 1, dtype=np.float64)
+            # discell2_0[0] = 0.0; discell2_0[1:] = distance2s[argsort]
             discell2_0 = distance2s[argsort]
             icid = icell_identity1s[argsort]  # Cell IDs
 
             for i in range(inc-2, -1, -1):
+                # idiscell = discell2_0[i+1]
                 idiscell = discell2_0[i]
                 if idiscell < maxdist:
                     icellid_out1 = icid[i]
@@ -1881,7 +2082,7 @@ def create_tree_structure_1311_scipy():
 
     H.allocate('idpart_1311',H.npart, dtype=np.int32)
     if (H.verbose): print(f'{print_prefix}Create KDtree structure...')
-    if (H.verbose): ref = time.time()
+    ref = time.time()
     tree = KDTree(mem['pos_10'], 
                   leafsize=H.npartpercell, compact_nodes=True,
                   copy_data=False, balanced_tree=True,
@@ -2087,6 +2288,8 @@ def create_tree_structure_1311():
         'rmass_cell_1311', 'rsize_cell_1311', 'rpos_cell_1311',
         'rsister_1311', 'rfirstchild_1311', 'ncell_chunks_1311',
         )
+    # raise ValueError("stop")
+    # -----------------------------------------------------
     
 def _create_KDtree_worker(icpu, stack, inccell_root):
     pos_ref_0 = H.pos_ref_0
@@ -2517,13 +2720,119 @@ def remove_degenerate_particles():
 #=======================================================================
     raise NotImplementedError('remove_degenerate_particles is not implemented yet')
 
+#   real(kind=8), parameter :: accurac=1.d-6
+
+#   integer, allocatable, dimension(:) :: idgene
+#   real(kind=8),allocatable, dimension(:) :: tmp
+#   real(kind=8),allocatable, dimension(:,:) :: possav
+#   logical,allocatable,dimension(:) :: move
+#   real(kind=8) :: xref,tolerance,tolerance2,phi,costeta,teta,sinteta
+#   real(kind=8) :: ran2
+#   logical :: doneiter,done
+#   integer(kind=4) :: i,niter,j,ipar,jpar,idd,jdd,incdege
+#   integer(kind=4) :: idum
+
+#   if (H.megaverbose) print(f'{print_prefix}Move randomly particles at exactly the same position')
+
+#   idum=-111
+#   tolerance=max(H.xlongs2,H.ylongs2,H.zlongs2)*accurac
+#   H.allocate(idgene(H.npart),tmp(H.npart),move(H.npart))
+#   tolerance2=2.0*tolerance
+#   H.allocate(possav(3,H.npart))
+#   do i=1,H.npart
+#      possav(1:3,i)=pos(i,1:3)
+#   enddo
+
+#   niter=1
+#   doneiter=False
+#   while ( not doneiter) 
+#      if (H.megaverbose) print(f'{print_prefix}Iteration :',niter)
+#      niter=niter+1
+#      doneiter=False
+#      do i=1,H.npart
+#         tmp(i)=pos(i,1)
+#         move(i)=False
+#      enddo
+#      call indexx(H.npart,tmp,idgene)
+
+#      done=False
+#      i=1
+#      while ( not done)
+#         xref=tmp(idgene(i))
+#         j=i+1
+#         if (j > H.npart) then
+#            j=1
+#            done=True
+#         endif
+#         while (abs(xref-tmp(idgene(j))) < tolerance)
+#            j=j+1
+#            if (j > H.npart) then
+#               j=1
+#               done=True
+#            endif
+#         enddo
+#         do ipar=i,j-1
+#            idd=idgene(ipar)
+#            do jpar=ipar+1,j-1
+#               jdd=idgene(jpar)
+#               if (abs(pos(jdd,2)-pos(idd,2)) < tolerance and &
+#  &                abs(pos(jdd,3)-pos(idd,3)) < tolerance) then
+#                  move(idgene(jpar))=True
+#               endif
+#            enddo
+#         enddo
+#         i=j
+#      enddo
+#      incdege=0
+#      do i=1,H.npart
+#         if (move(i)) then
+#            incdege=incdege+1
+#         endif
+#      enddo
+#      if (H.megaverbose) print(&)
+#  &                 'Found the following number of degeneracies :',incdege
+#      do i=1,H.npart
+#         if (move(i)) then
+#            phi=2.*H.pi*ran2(idum)
+#            costeta=1.0-2.0*ran2(idum)
+#            teta=acos(costeta)           
+#            sinteta=sin(teta)
+#            pos(i,1)=possav(1,i)+tolerance2*cos(phi)*sinteta
+#            pos(i,2)=possav(2,i)+tolerance2*sin(phi)*sinteta
+#            pos(i,3)=possav(3,i)+tolerance2*costeta
+#         endif
+#      enddo
+     
+#      if (incdege==0) doneiter=True
+#   enddo
+
+#   deallocate(possav)
+#   deallocate(tmp,idgene,move)
+  
+# end subroutine remove_degenerate_particles
 
 #=======================================================================
 def convtoasc(number,sstring):
 #=======================================================================
 # To convert an integer(kind=4) smaller than 999999 to a 6 characters string
 #=======================================================================
+    #   integer(kind=4) :: number, istring, num, nums10, i
+    #   character*6 :: sstring
+    #   character*10,parameter :: nstring='0123456789'
     sstring = f"{number:06d}"
     return sstring
 
 #=======================================================================
+
+
+
+
+# #=======================================================================
+# function HsurH0(z,omega0,omegaL,omegaR)
+# #=======================================================================
+#   real(kind=8) :: z,omega0,omegaL,omegaR,HsurH0
+
+#   HsurH0=np.sqrt(Omega0*(1+z)**3+OmegaR*(1+z)**2+OmegaL)
+# end function HsurH0
+
+

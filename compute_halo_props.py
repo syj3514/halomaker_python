@@ -4,6 +4,7 @@ from halo_defs import mem,halo,vector,frange
 import time, os
 import numpy as np
 from scipy.io import FortranFile
+from itertools import combinations
 
 #//////////////////////////////////////////////////////////////////////////
 #**************************************************************************
@@ -40,8 +41,6 @@ def initgsoft_00():
     required for a cubic spline kernel; interpolation is performed in 
     distance.
     '''
-    # integer(kind=4) :: i
-    # real(kind=8)    :: deldrg,xw,xw2,xw3,xw4,tiny,one,two
 
     tiny = np.float64(1.e-19)
     one  = np.float64(1.0)
@@ -71,12 +70,8 @@ def init_cosmo_01():
     This routine reads in the `input_HaloMaker.dat` file which contains the cosmological 
     and technical parameters of the N-Body simulation to analyze.
     '''
-    import compute_neiKDtree_mod as neiKDtree
-    # use fof
-    # integer(kind=4)      :: i
-    # # cannot do otherwise than setting all the strings to a value larger than that of a line 
-    # # in the input file and trim them whenever it is needed
-    # character(len=200)   :: line,name,value
+    # cannot do otherwise than setting all the strings to a value larger than that of a line 
+    # in the input file and trim them whenever it is needed
 
     # Initial (beginning of the simulation) expansion factor
     H.ai             = np.float64(1.0)
@@ -154,8 +149,16 @@ def init_cosmo_01():
             H.nsteps = np.int32(value)
         elif (name == 'dump_DMs'):
             H.dump_dms = value=='.true.'
-        elif (name == 'H.agor_file'):
+        elif (name == 'agor_file'):
             if(H.ANG_MOM_OF_R): H.agor_file = f"{H.data_dir}/{value}"
+        elif (name == 'dchmod'):
+            H.dchmod = int(f"0o{int(value)}", 8)
+        elif (name == 'fchmod'):
+            H.fchmod = int(f"0o{int(value)}", 8)
+        elif (name == 'uid'):
+            H.uid = int(value)
+        elif (name == 'gid'):
+            H.gid = int(value)
         else:
             print(f'dont recognise parameter: {name}')
     f20.close()
@@ -194,21 +197,14 @@ def new_step_1():
     This is the main subroutine: it builds halos from the particle simulation and 
     computes their properties ...
     '''
-#     integer(kind=4)                      :: indexp,ierr,i
-#     integer(kind=4)                      :: found,n_halo_contam,n_subs_contam
-#     real(kind=8)                         :: read_time_ini,read_time_end
-#     real(kind=8)                         :: t0,t1
-#     logical                              :: printdatacheckhalo !put to true if bug after make_linked_list 
-# #ifdef H.ANG_MOM_OF_R
-#     character(200)                       :: filename
-# #endif
     print(f'\n\n> Timestep  --->    {H.numero_step}')
     print('> -------------------')
 
     read_time_ini = time.time()
 
     # read N-body info for this new step
-    print("\n\n\n $ Read data...", flush=True)
+    print(f"\n\n\n$$ Read data...", flush=True)
+    _ref = time.time()
     read_data_10()
     if(H.nbodies<H.nMembers):
         print()
@@ -220,29 +216,38 @@ def new_step_1():
         if(H.allocated('pos_10')): H.deallocate('pos_10')
         if(H.allocated('vel_10')): H.deallocate('vel_10')
         if(H.allocated('mass_10')): H.deallocate('mass_10')
-        if(H.allocated('liste_parts')): H.deallocate('liste_parts')
+        if(H.allocated('whereIam_parts')): H.deallocate('whereIam_parts')
         if(len(H.liste_halos_o0)>0): H.liste_halos_o0 = []
         return
+    print(f"\n$$ Read data done ({time.time()-_ref:.2f} sec)", flush=True)
 
     # determine the age of the universe and current values of cosmological parameters
-    print("\n $ Determine the Age...", flush=True)
+    print(f"\n$$ Determine the Age...", flush=True)
+    _ref = time.time()
     det_age_11()
+    print(f"\n$$ Determine the Age done ({time.time()-_ref:.2f} sec)", flush=True)
     
     # first compute the virial overdensity (with respect to the average density of the universe) 
     # predicted by the top-hat collapse model at this redshift 
-    print("\n $ Compute the virial overdensity...", flush=True)
+    print(f"\n$$ Compute the virial overdensity...", flush=True)
+    _ref = time.time()
     virial_12()
+    print(f"\n$$ Compute the virial overdensity done ({time.time()-_ref:.2f} sec)", flush=True)
 
-    print("\n $ Make halos...", flush=True)
+    print(f"\n$$ Make halos...", flush=True)
+    _ref = time.time()
     if(H.method!="FOF"):
-       H.allocate('liste_parts',H.nbodies,dtype=np.int32)
+       H.allocate('whereIam_parts',H.nbodies,dtype=np.int32)
     make_halos_13()  
+    print(f"\n$$ Make halos done ({time.time()-_ref:.2f} sec)", flush=True)
 
     if(H.Test_FOF):
-        filelisteparts = f"liste_parts_{H.numstep}"
+        filelisteparts = f"whereIam_parts_{H.numstep}"
         with FortranFile(filelisteparts, 'w') as f:
             f.write_record(H.nbodies,H.nb_of_halos)
-            f.write_record(mem['liste_parts'][:H.nbodies])
+            f.write_record(mem['whereIam_parts'][:H.nbodies])
+        full_path = os.path.abspath(filelisteparts)
+        os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
         # reset nb of halos not to construct halos
         H.nb_of_halos = 0
     # if there are no halos go to the next timestep
@@ -251,20 +256,22 @@ def new_step_1():
         H.deallocate('pos_10','vel_10')
         if(H.allocated('density_1312')): H.deallocate('density_1312')
         if(H.allocated('mass_10')): H.deallocate('mass_10')
-        H.deallocate('liste_parts')
+        H.deallocate('whereIam_parts')
         return
 
-    H.allocate('first_part_oo_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
-    H.allocate('nb_of_parts_o0_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
-    # make a linked list of the particles so that each member of a halo points to the next 
-    # until there are no more members (last particles points to -1)
-    H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
+    ### Move this to inside `make_linked_list` function
+    # H.allocate('first_part_oo_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
+    # H.allocate('nb_of_parts_o0_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
+    # # make a linked list of the particles so that each member of a halo points to the next 
+    # # until there are no more members (last particles points to -1)
+    # H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
 
-    print("\n $ Make linked list...", flush=True)
+    print(f"\n$$ Make linked list...", flush=True)
+    _ref = time.time()
     make_linked_list_14()
 
-    # H.deallocate liste_parts bc it has been replaced by linked_list_oo
-    H.deallocate('liste_parts')
+    # H.deallocate whereIam_parts bc it has been replaced by linked_list_oo
+    H.deallocate('whereIam_parts')
 
     # in case of resimulation (or individual particle masses) count how many halos are contaminated 
     # (i.e. contain "low res" particles) 
@@ -290,9 +297,12 @@ def new_step_1():
                     found = 1
                 indexp = mem['linked_list_oo_1'][indexp]
         print('> # of halos, # of CONTAMINATED halos :',H.nb_of_halos,n_halo_contam,H.nb_of_subhalos,n_subs_contam)
-        f222 = open('ncontam_halos.dat', 'r')
+        f222 = open('ncontam_halos.dat', 'a+')
         f222.write(f'{H.numero_step:6d} {H.nb_of_halos:6d} {n_halo_contam:6d} {H.nb_of_subhalos:6d} {n_subs_contam:6d}\n')
         f222.close()
+        full_path = os.path.abspath('ncontam_halos.dat')
+        os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
+    print(f"\n$$ Make linked list done ({time.time()-_ref:.2f} sec)", flush=True)
 
     # until now we were using code units for positions and velocities
     # this routine changes that to physical (non comoving) coordinates for positions 
@@ -307,6 +317,9 @@ def new_step_1():
 
     init_halos_16()
 
+
+    print(f"\n$$ Calculate halo properties...", flush=True)
+    _ref = time.time()
     fagor=None
     if(H.ANG_MOM_OF_R):
         filename = f"{H.agor_file}.{H.numstep:03d}"
@@ -315,26 +328,43 @@ def new_step_1():
         fagor.write_record(H.nshells)
 
     printdatacheckhalo = False
-    for i1 in frange(1,H.nb_of_halos + H.nb_of_subhalos):
+    pbar = tqdm(
+        frange(1,H.nb_of_halos + H.nb_of_subhalos), 
+        total = H.nb_of_halos + H.nb_of_subhalos,
+        desc = "Calc halo props"
+        )
+    for i1 in pbar:
         if(printdatacheckhalo):
             print('> halo:', i1,'nb_of_parts_o0_1',mem['nb_of_parts_o0_1'][i1])
             t0 = time.time()
+        # member particles
+        my_number = H.liste_halos_o0[i1].my_number
+        idx = mem['whereIam_idxs'][my_number]
+        count = mem['whereIam_counts'][my_number]
+        indexps = mem['pids0_groupsorted'][idx:idx+count]
+        mypos = mem['pos_10'][indexps]
+        myvel = mem['vel_10'][indexps]
+        mymass = mem['mass_10'][indexps] if H.allocated('mass_10') else H.massp
+        mydensity = mem['density_1312'][indexps]
+        member = (count, indexps, mypos, myvel, mymass, mydensity)
+        
+
         # determine mass of halo       
-        det_mass_17(H.liste_halos_o0[i1])
+        det_mass_17(H.liste_halos_o0[i1], member=member)
         if(printdatacheckhalo): print('> mass:', H.liste_halos_o0[i1].m)
         # compute center of halo there as position of "most dense" particle
         # and give it the velocity of the true center of mass of halo
-        det_center_18(H.liste_halos_o0[i1])
+        det_center_18(H.liste_halos_o0[i1], member=member)
         if(printdatacheckhalo): print('> center:',H.liste_halos_o0[i1].p)
         # compute angular momentum of halos
-        compute_ang_mom_19(H.liste_halos_o0[i1])
+        compute_ang_mom_19(H.liste_halos_o0[i1], member=member)
         if(printdatacheckhalo): print('> angular momentum:',H.liste_halos_o0[i1].L)
         # compute r = max(distance of halo parts to center of halo)
-        r_halos_1a(H.liste_halos_o0[i1])
+        r_halos_1a(H.liste_halos_o0[i1], member=member)
         if(printdatacheckhalo): print('> radius:',H.liste_halos_o0[i1].r)
         # compute energies and virial properties of the halos depending on density profile
         # (so this profile is also computed in the routine)
-        det_vir_1b(H.liste_halos_o0[i1], fagor=fagor)
+        det_vir_1b(H.liste_halos_o0[i1], fagor=fagor, member=member)
         if(printdatacheckhalo): print('> mvir,rvir:',H.liste_halos_o0[i1].datas.mvir,H.liste_halos_o0[i1].datas.mvir)
         # compute dimensionless spin parameter of halos
         compute_spin_parameter_1c(H.liste_halos_o0[i1])
@@ -345,13 +375,21 @@ def new_step_1():
             print('> halo computation took:',int(t1- t0) ,'s')
             print()
 
-    if(H.ANG_MOM_OF_R): fagor.close()
+    if(H.ANG_MOM_OF_R):
+        fagor.close()
+        full_path = os.path.abspath(filename)
+        os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
+    print(f"\n$$ Calculate halo properties done ({time.time()-_ref:.2f} sec).", flush=True)
 
+    print(f"\n$$ Write tree_bricks...", flush=True)
+    _ref = time.time()
     write_tree_brick_1d()
+    print(f"\n$$ Write tree_bricks done ({time.time()-_ref:.2f} sec)", flush=True)
 
     H.liste_halos_o0 = []
     H.deallocate('nb_of_parts_o0_1','first_part_oo_1','linked_list_oo_1')
     H.deallocate('pos_10','vel_10')
+    H.deallocate('whereIam_idxs','whereIam_counts','pids0_groupsorted')
     if(H.allocated('mass_10')): H.deallocate('mass_10')
     if(not H.cdm): H.deallocate('density_1312')
 
@@ -359,21 +397,32 @@ def new_step_1():
 
     print('> time_step computations took : ',round(read_time_end - read_time_ini),' seconds')
     print()
+    H.mlist()
 
 #***********************************************************************
 def make_halos_13():
     '''
     subroutine which builds the halos from particle data using fof or adaptahop
     '''
-    # use fof
-    import compute_neiKDtree_mod as neiKDtree
-    #real(kind=8)    :: read_time_ini,read_time_end
+    if H.massalloc:
+        print("MASS ALLOC")
+        import compute_neiKDtree_mod as neiKDtree
+    else:
+        print("NO MASS ALLOC")
+        import compute_neiKDtree_mod_massp as neiKDtree
 
     print('> In routine make_halos ')
     print('> ----------------------')
     print(f"> npart={H.npart}")
     
-    print()
+    print( )
+    print( '_______________________________________________________________________'  )
+    print( )
+    print( '          Compute neiKDtree'  )
+    print( '          -----------------'  )
+    print( )
+    print( '_______________________________________________________________________'  )
+
     H.fPeriod[:]    = H.FlagPeriod
     if(H.FlagPeriod==1):
         print('> WARNING: Assuming PERIODIC boundary conditions --> make sure this is correct', flush=True)
@@ -381,7 +430,7 @@ def make_halos_13():
     else:
         print('> WARNING: Assuming NON PERIODIC boundary conditions --> make sure this is correct', flush=True)
         periodic = False
-    
+
     if(H.numero_step==1):
         if(H.cdm):
             print('> Center of haloes and subhaloes are defined as the particle the closest to the cdm')
@@ -443,8 +492,11 @@ def make_linked_list_14():
     Subroutine builds a linked list of parts for each halo which 
     contains all its particles.
     '''
-    # integer(kind=4)             :: i,index1,index2,ierr
-    # integer(kind=4),allocatable :: current_ptr_o0(:)  
+    H.allocate('first_part_oo_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
+    H.allocate('nb_of_parts_o0_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
+    # make a linked list of the particles so that each member of a halo points to the next 
+    # until there are no more members (last particles points to -1)
+    H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
 
     current_ptr_o0 = np.zeros(1+H.nb_of_halos+H.nb_of_subhalos, dtype=np.int32)-1
     # initialization of linked list
@@ -453,25 +505,25 @@ def make_linked_list_14():
     mem['linked_list_oo_1'][:] = -1
  
     # make linked list: a few (necessary) explanations ....
-    #   1/ index1 (liste_parts(i)) is the number of the halo to which belongs particle i (i is in [1..nbodies]) 
+    #   1/ hindex1 (whereIam_parts(i)) is the number of the halo to which belongs particle i (i is in [1..nbodies]) 
     #   2/ first_part_oo(j) is the number of the first particle of halo j  (j is in [1..nhalo])
-    #   3/ current_ptr_o0(index1) is the number of the latest particle found in halo number index1 
+    #   3/ current_ptr_o0(hindex1) is the number of the latest particle found in halo number hindex1 
     # to sum up, first_part_oo(i) contains the number of the first particle of halo i,
     # linked_list_oo(first_part_oo(i)) the number of the second particle of halo i, etc ... until 
     # the last particle which points to number -1
 
-    for i0 in range(H.nbodies):
-        index1 = mem['liste_parts'][i0]
-        if(index1>(H.nb_of_halos+H.nb_of_subhalos)): raise IndexError('error in liste_parts')
-        if (mem['first_part_oo_1'][index1] == -1):
-            mem['first_part_oo_1'][index1]  = i0
-            mem['nb_of_parts_o0_1'][index1] = 1
-            current_ptr_o0[index1] = i0
+    for pindex0 in range(H.nbodies):
+        hindex1 = mem['whereIam_parts'][pindex0]
+        if(hindex1>(H.nb_of_halos+H.nb_of_subhalos)): raise IndexError('error in whereIam_parts')
+        if (mem['first_part_oo_1'][hindex1] == -1):
+            mem['first_part_oo_1'][hindex1]  = pindex0
+            mem['nb_of_parts_o0_1'][hindex1] = 1
+            current_ptr_o0[hindex1] = pindex0
         else:
-            index2              = current_ptr_o0[index1]
-            mem['linked_list_oo_1'][index2] = i0
-            current_ptr_o0[index1] = i0
-            mem['nb_of_parts_o0_1'][index1] += 1
+            ind              = current_ptr_o0[hindex1]
+            mem['linked_list_oo_1'][ind] = pindex0
+            current_ptr_o0[hindex1] = pindex0
+            mem['nb_of_parts_o0_1'][hindex1] += 1
 
     # close linked list
     for i0 in range(0,H.nb_of_halos+H.nb_of_subhalos+1):
@@ -482,8 +534,6 @@ def make_linked_list_14():
 
 #*************************************************************************
 def init_halos_16():
-    # integer(kind=4) :: ihalo,ihtmp,imother
-    
     for ih1 in frange(1, H.nb_of_halos + H.nb_of_subhalos):
         H.liste_halos_o0[ih1].clear_halo()
         H.liste_halos_o0[ih1].my_number   = ih1
@@ -494,8 +544,8 @@ def init_halos_16():
                     H.liste_halos_o0[ih1].nextsub = mem['first_daughter_1319'][ih1-1]
                 H.liste_halos_o0[ih1].hosthalo   = ih1
             else:
-                H.liste_halos_o0[ih1].level    = mem['level_1319'][ih1]
-                H.liste_halos_o0[ih1].hostsub = mem['mother_1319'][ih1]
+                H.liste_halos_o0[ih1].level    = mem['level_1319'][ih1-1]
+                H.liste_halos_o0[ih1].hostsub = mem['mother_1319'][ih1-1]
                 imother1 = H.liste_halos_o0[ih1].hostsub
                 H.liste_halos_o0[imother1].nbsub += 1
                 if(mem['first_daughter_1319'][ih1-1]>0):
@@ -517,98 +567,63 @@ def init_halos_16():
     if(H.fsub): H.deallocate('mother_1319','first_daughter_1319','first_sister_1319','level_1319')
 
 #*************************************************************************
-def det_mass_17(h:halo):
+def det_mass_17(h:halo, member=None):
     '''
     adds up masses of particles to get total mass of the halo. 
     '''
-    # integer(kind=4)    :: indexp,npch
-    # real(kind=8)       :: masshalo
-    # type(halo)         :: h
-    
-    masshalo      = 0e0
-    npch          = 0
-    indexp        = mem['first_part_oo_1'][h.my_number]
-    while(indexp != -1):
-        if(H.allocated('mass_10')):
-            masshalo += mem['mass_10'][indexp]
-        else:
-            masshalo += H.massp
-        npch += 1
-        indexp = mem['linked_list_oo_1'][indexp]       
+
+
+    npch = member[0]
+    imass = member[4]
+    if H.allocated('mass_10'):
+        masshalo = np.sum(imass)
+        mcontam = np.sum(imass[imass > H.massp* 1.00001])
+    else:
+        masshalo = H.massp * npch
+        mcontam = 0.0
     h.m = masshalo  # in 10^11 M_sun
+    h.E.mcontam = mcontam
 
     if(npch != mem['nb_of_parts_o0_1'][h.my_number]):
        print('nb_of_parts_o0, npch:',h.my_number,npch)
        raise ValueError('> Fatal error in det_mass for', h.my_number)
 
 #***********************************************************************
-def compute_ang_mom_19(h:halo):
+def compute_ang_mom_19(h:halo, member=None):
     '''
     compute angular momentum of all halos
     we compute r * m * v, where r & v are pos and vel of halo particles relative to center of halo
     (particle closest to center of mass or most dense particle)
     '''
-    # integer(kind=4) :: indexp
-    # real(kind=8)    :: lx,ly,lz
-    # type (halo)     :: h
-    # type (vector)   :: dr,p
+    ipos, ivel, imass = member[2], member[3], member[4]
 
-    dr=vector(); p=vector()
-    indexp = mem['first_part_oo_1'][h.my_number]
-    lx =0 ; ly = 0 ; lz = 0
-    while(indexp != -1):
-        dr.x   = mem['pos_10'][indexp,1] - h.p.x
-        dr.y   = mem['pos_10'][indexp,2] - h.p.y
-        dr.z   = mem['pos_10'][indexp,3] - h.p.z
-        
-        correct_for_periodicity(dr)
-        
-        if (H.allocated('mass_10')):
-            p.x = mem['mass_10'][indexp]*(mem['vel_10'][indexp,1]-h.v.x)
-            p.y = mem['mass_10'][indexp]*(mem['vel_10'][indexp,2]-h.v.y)
-            p.z = mem['mass_10'][indexp]*(mem['vel_10'][indexp,3]-h.v.z)
-        else:
-            p.x = H.massp*(mem['vel_10'][indexp,1]-h.v.x)
-            p.y = H.massp*(mem['vel_10'][indexp,2]-h.v.y)
-            p.z = H.massp*(mem['vel_10'][indexp,3]-h.v.z)
-
-        lx  += dr.y*p.z - dr.z*p.y   # in 10**11 Msun * km/s * Mpc
-        ly  += dr.z*p.x - dr.x*p.z
-        lz  += dr.x*p.y - dr.y*p.x        
-        
-        indexp = mem['linked_list_oo_1'][indexp]   
+    drxs = correct_for_periodicity_1d(ipos[:,0] - h.p.x)
+    drys = correct_for_periodicity_1d(ipos[:,1] - h.p.y)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - h.p.z)
+    pvxs = imass * (ivel[:,0] - h.v.x)
+    pvys = imass * (ivel[:,1] - h.v.y)
+    pvzs = imass * (ivel[:,2] - h.v.z)
+    lx = np.sum(drys*pvzs - drzs*pvys) # in 10**11 Msun * km/s * Mpc
+    ly = np.sum(drzs*pvxs - drxs*pvzs)
+    lz = np.sum(drxs*pvys - drys*pvxs)
 
     h.L.x = lx
     h.L.y = ly
     h.L.z = lz
 
 #***********************************************************************
-def r_halos_1a(h:halo):
+def r_halos_1a(h:halo, member=None):
     '''
     compute distance of the most remote particle (with respect to center of halo, which
     is either center of mass or most bound particle)
     '''
-    # integer(kind=4) :: indexp
-    # real(kind=8)    :: dr2max,dr2
-    # type (vector)   :: dr
-    # type (halo)     :: h
-    dr = vector()
-    dr2max  = 0.0
-    indexp = mem['first_part_oo_1'][h.my_number]
+    ipos = member[2]
+    drxs = correct_for_periodicity_1d(ipos[:,0] - h.p.x)
+    drys = correct_for_periodicity_1d(ipos[:,1] - h.p.y)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - h.p.z)
+    dr2s = drxs**2 + drys**2 + drzs**2
+    dr2max = np.max(dr2s)
 
-    while(indexp != -1):
-        dr.x = mem['pos_10'][indexp,1] - h.p.x
-        dr.y = mem['pos_10'][indexp,2] - h.p.y
-        dr.z = mem['pos_10'][indexp,3] - h.p.z         
-        
-        correct_for_periodicity(dr)
-        
-        dr2    = (dr.x*dr.x + dr.y*dr.y + dr.z*dr.z)
-        
-        if (dr2 > dr2max):
-            dr2max         = dr2
-        indexp=mem['linked_list_oo_1'][indexp]
-        
     h.r = np.sqrt(dr2max)
 
 #***********************************************************************
@@ -646,129 +661,92 @@ def correct_for_periodicity(dr:vector, copy=False):
         if (dr.z > + H.Lbox_pt2): dr.z = dr.z - H.Lbox_pt
         if (dr.z < - H.Lbox_pt2): dr.z = dr.z + H.Lbox_pt 
 
+def correct_for_periodicity_1d(dr:np.ndarray, copy=False):
+    if (H.FlagPeriod == 0): return  #--> NO PERIODIC BCs 
+    
+    if(copy):
+        temp = np.where(dr > + H.Lbox_pt2, dr - H.Lbox_pt, dr)
+        temp = np.where(temp < - H.Lbox_pt2, temp + H.Lbox_pt, temp)
+        return temp
+    else:
+        dr = np.where(dr > + H.Lbox_pt2, dr - H.Lbox_pt, dr)
+        dr = np.where(dr < - H.Lbox_pt2, dr + H.Lbox_pt, dr)
+        return dr
+
+
 #***********************************************************************                
-def det_center_18(h:halo):
+def det_center_18(h:halo, member=None):
     '''
     compute position of center of mass of halo, and its velocity.
     '''
-    # type (halo)        :: h
-    # integer(kind=4)    :: indexp, icenter,ifirst 
-    # real(kind=8)       :: maxdens, distmin
-    # real(kind=8)       :: pcx,pcy,pcz,vcx,vcy,vcz,vmean,v2mean,sigma2,vnorm
-    # type(vector)       :: dr,pc
-
-    # real(kind=8)       ::aaa,bbb,ccc,ddd,eee,half_radius,mhalf
-    # integer(kind=4)    ::i,j,nmax
-    # real(kind=8),dimension(:),allocatable::drr,mm,vxx,vyy,vzz
 
     icenter = -1
-
+    pos_10 = mem['pos_10']
+    first_part_oo_1 = mem['first_part_oo_1']
+    indexps = member[1]
+    ipos = member[2] # shape (N, 3)
+    ivel = member[3] # shape (N, 3)
+    imass = member[4]
+    
+    hmy_number = h.my_number
+    hm = h.m
     if(H.cdm):
         # compute cdm
-        dr = vector(); pc = vector()
-        pcx   = 0 ; pcy   = 0 ; pcz = 0
-        ifirst = mem['first_part_oo_1'][h.my_number]
-        indexp = ifirst
-        while(indexp != -1):
-            dr.x = mem['pos_10'][indexp,1] - mem['pos_10'][ifirst,1]
-            dr.y = mem['pos_10'][indexp,2] - mem['pos_10'][ifirst,2]
-            dr.z = mem['pos_10'][indexp,3] - mem['pos_10'][ifirst,3]
-            correct_for_periodicity(dr)
-            if(H.allocated('mass_10')):
-                pcx += mem['mass_10'][indexp]*dr.x,
-                pcy += mem['mass_10'][indexp]*dr.y,
-                pcz += mem['mass_10'][indexp]*dr.z,
-            else:
-                pcx += H.massp*dr.x,
-                pcy += H.massp*dr.y,
-                pcz += H.massp*dr.z,
-            indexp = mem['linked_list_oo_1'][indexp]
+        pc = vector()
+        ifirst = first_part_oo_1[hmy_number]
+        pos_10_ifirst = pos_10[ifirst]
+        drxs = correct_for_periodicity_1d(ipos[:,0] - pos_10_ifirst[0])
+        drys = correct_for_periodicity_1d(ipos[:,1] - pos_10_ifirst[1])
+        drzs = correct_for_periodicity_1d(ipos[:,2] - pos_10_ifirst[2])
         # It's simply the center of mass.
-        pcx  = pcx / h.m + mem['pos_10'][ifirst,1]
-        pcy  = pcy / h.m + mem['pos_10'][ifirst,2]
-        pcz  = pcz / h.m + mem['pos_10'][ifirst,3]
-        pc.x = pcx
-        pc.y = pcy
-        pc.z = pcz
+        pc.x = np.sum(imass * drxs) / hm + pos_10_ifirst[0]
+        pc.y = np.sum(imass * drys) / hm + pos_10_ifirst[1]
+        pc.z = np.sum(imass * drzs) / hm + pos_10_ifirst[2]
         correct_for_periodicity(pc)
         # search particule closest to the cdm
-        indexp  = ifirst
         distmin = H.Lbox_pt
-        while (indexp != -1):
-            dr.x = mem['pos_10'][indexp,1] - pc.x
-            dr.y = mem['pos_10'][indexp,2] - pc.y
-            dr.z = mem['pos_10'][indexp,3] - pc.z
-            correct_for_periodicity(dr)
-            if (np.sqrt(dr.x**2+dr.y**2+dr.z**2)<distmin):
-                icenter = indexp
-                distmin = np.sqrt(dr.x**2+dr.y**2+dr.z**2)
-            indexp = mem['linked_list_oo_1'][indexp]
+        drxs = correct_for_periodicity_1d(ipos[:,0] - pc.x)
+        drys = correct_for_periodicity_1d(ipos[:,1] - pc.y)
+        drzs = correct_for_periodicity_1d(ipos[:,2] - pc.z)
+        drs = np.sqrt(drxs**2 + drys**2 + drzs**2)
+        min_index = np.argmin(drs)
+        if drs[min_index] < distmin:
+            icenter = indexps[min_index]
     else:
-        maxdens = 0.0
-        indexp  = mem['first_part_oo_1'][h.my_number]
-        while (indexp != -1):
-            if(mem['density_1312'][indexp]>maxdens):
-                maxdens = mem['density_1312'][indexp]
-                icenter = indexp
-            indexp = mem['linked_list_oo_1'][indexp]
+        dens = member[5]
+        max_index = np.argmax(dens)
+        icenter = indexps[max_index]
 
     if (icenter<0):
-        print('> Could not find a center for halo: ',h.my_number,icenter)
-        print(' h.m,massp,h.m/massp             : ',h.m,H.massp,h.m/H.massp)
+        print('> Could not find a center for halo: ',hmy_number,icenter)
+        print(' hm,massp,hm/massp             : ',hm,H.massp,hm/H.massp)
         print(' Lbox_pt,distmin                 : ',H.Lbox_pt,distmin)
-        print(' pcx,pcy,pcz                  : ',pcx,pcy,pcz)
+        print(' pcx,pcy,pcz                  : ',pc.x,pc.y,pc.z)
         print(' periodicity flag                : ',H.FlagPeriod)
         raise ValueError('> Check routine det_center')
 
-    h.p.x  = mem['pos_10'][icenter,1]
-    h.p.y  = mem['pos_10'][icenter,2]
-    h.p.z  = mem['pos_10'][icenter,3]
+    h.p.x  = pos_10[icenter,0]
+    h.p.y  = pos_10[icenter,1]
+    h.p.z  = pos_10[icenter,2]
 
     # velocity of center is set equal velocity of center of mass:
-    indexp = mem['first_part_oo_1'][h.my_number]
-    vcx = 0 ; vcy = 0 ; vcz =0
-    v2mean= 0
-    i=0
-    while (indexp != -1):
-        i=i+1
-        if (H.allocated('mass_10')):
-            vcx += mem['mass_10'][indexp]*mem['vel_10'][indexp,1]
-            vcy += mem['mass_10'][indexp]*mem['vel_10'][indexp,2]
-            vcz += mem['mass_10'][indexp]*mem['vel_10'][indexp,3]
-        else:
-            vcx += H.massp*mem['vel_10'][indexp,1]
-            vcy += H.massp*mem['vel_10'][indexp,2]
-            vcz += H.massp*mem['vel_10'][indexp,3]
-        indexp   = mem['linked_list_oo_1'][indexp]
-    nmax=i
+    vcx = np.sum(imass * ivel[:,0])
+    vcy = np.sum(imass * ivel[:,1])
+    vcz = np.sum(imass * ivel[:,2])
     
-    h.v.x = vcx/h.m
-    h.v.y = vcy/h.m
-    h.v.z = vcz/h.m
+    h.v.x = vcx/hm
+    h.v.y = vcy/hm
+    h.v.z = vcz/hm
 
-    vmean=np.sqrt(vcx**2+vcy**2+vcz**2)/h.m
+    vmean=np.sqrt(vcx**2+vcy**2+vcz**2)/hm
+    vnorms = np.sqrt(ivel[:,0]**2 + ivel[:,1]**2 + ivel[:,2]**2)
+    sigma2 = np.sum(imass * (vnorms - vmean)**2)
 
-    indexp = mem['first_part_oo_1'][h.my_number]
-    sigma2= 0
-    i=0
-    while (indexp != -1):
-        i += 1
-        vnorm = np.sqrt(mem['vel_10'][indexp,1]**2+mem['vel_10'][indexp,2]**2+mem['vel_10'][indexp,3]**2)
-        if (H.allocated('mass_10')):
-            sigma2 += mem['mass_10'][indexp]*(vnorm-vmean)**2
-        else:
-            sigma2 += H.massp       *(vnorm-vmean)**2
-        indexp   = mem['linked_list_oo_1'][indexp]
-    h.sigma = np.sqrt(sigma2/h.m)
+    h.sigma = np.sqrt(sigma2/hm)
+
 
 #***********************************************************************
 def interact_1b30(i,j):
-    # integer(kind=4) :: i,j,ifirst
-    # real(kind=8)    :: dist2ij
-    # real(kind=8)    :: interact_1b30,rinveff,r3inveff
-    # real(kind=8)    :: epstmp,massp2,lbox2
-    # type (vector)   :: dr
-
     # Check if the attributes exist, and initialize them if they don't
     if not hasattr(interact_1b30, 'ifirst'):
         interact_1b30.ifirst = 1
@@ -794,20 +772,25 @@ def interact_1b30(i,j):
 
     dr = vector()
     Lbox2   = H.Lbox_pt**2
-    dr.x    = mem['pos_10'][j,1] - mem['pos_10'][i,1]  
-    dr.y    = mem['pos_10'][j,2] - mem['pos_10'][i,2]
-    dr.z    = mem['pos_10'][j,3] - mem['pos_10'][i,3]
+    ipos = mem['pos_10'][i]; jpos = mem['pos_10'][j]
+    imass = mem['mass_10'][i] if H.allocated('mass_10') else H.massp
+    jmass = mem['mass_10'][j] if H.allocated('mass_10') else H.massp
+    dr.x    = jpos[0] - ipos[0]
+    dr.y    = jpos[1] - ipos[1]
+    dr.z    = jpos[2] - ipos[2]
     correct_for_periodicity(dr)
     dist2ij = (dr.x**2) + (dr.y**2) + (dr.z**2)
     dist2ij = dist2ij / Lbox2
 
     if (H.allocated('mass_10')):
+        # For Gadget
         if (H.allocated('epsvect')):
             rinveff,r3inveff = softgrav_1b300(mem['epsvect'][i],mem['epsvect'][j],dist2ij)
-            ans = -mem['mass_10'][i] * mem['mass_10'][j] * rinveff
+            ans = -imass * jmass * rinveff
+        # For others
         else:
             # do not correct for softening --> have to change that
-            ans =-mem['mass_10'][i]*mem['mass_10'][j]/np.sqrt(dist2ij)
+            ans =-imass * jmass /np.sqrt(dist2ij)
     else:
         rinveff,r3inveff = softgrav_1b300(epstmp,epstmp,dist2ij,rinveff,r3inveff)
         ans = -massp2 * rinveff
@@ -824,10 +807,6 @@ def softgrav_1b300(epsp,epsi,drdotdr):
     For the spline smoothing, phsmooth_oo and acsmooth must have 
     been initialized by initgsoft.
     '''
-    # integer(kind=4) :: smindex
-    # real(kind=8)    :: epsp,epsi,drdotdr,sdrdotdr,rinveff,r3inveff,drdeldrg
-    # real(kind=8)    :: drsm,phsm,epseff,epsinv,dr,tiny,one
-
     tiny = 1.e-19
     one  = 1.0
 
@@ -864,125 +843,84 @@ def softgrav_1b300(epsp,epsi,drdotdr):
     return rinveff,r3inveff
 
 #***********************************************************************
-def tab_props_inside_1b40(h:halo,nr,tabm2_o0,tabk2_o0,tabp2_o0,v,amax,bmax,cmax):
+def tab_props_inside_1b40(h:halo,nr:int,v, member=None):
     '''
     returns the cumulative mass contained in concentric ellipsoids centered on the center of the
     halo (cdm or mbp)
     '''
-    # integer(kind=4)        :: nr,num_h,indexp,i,i_ell,louped_parts  
-    # real(kind=8)           :: amax,bmax,cmax,v(3,3)
-    # real(kind=8)           :: tabm2_o0(0:nr-1),tabk2_o0(0:nr-1),tabp2_o0(0:nr-1) ## double
-    # real(kind=8)           :: srm,srk                                   ## double
-    # real(kind=8)           :: rmax,dra,drb,drc
-    # real(kind=8)           :: r_ell,v2,rf
-    # real(kind=8),parameter :: epsilon = 1.d-2
-    # type (vector)          :: posp,vt
-    # type (halo)            :: h
+    tabm2_o0 = np.zeros(nr); tabk2_o0 = np.zeros(nr)
+    epsilon = 1e-2
     from num_rec import rf
-    posp = vector(); vt = vector()
+    count, _, ipos, ivel, imass, _ = member
+
     # rescale to get ellipsoid  concentric to principal ellipsoid
     # which contains all the particles of the halo
-    rmax = 0.0
-    indexp = mem['first_part_oo_1'][h.my_number]
-    while(indexp > 0):
-       posp.x = mem['pos_10'][indexp,0] - h.p.x
-       posp.y = mem['pos_10'][indexp,1] - h.p.y
-       posp.z = mem['pos_10'][indexp,2] - h.p.z
-       correct_for_periodicity(posp)
-        # project position vector along the principal ellipsoid axis
-       dra    = posp.x*v[0,0]+posp.y*v[1,0]+posp.z*v[2,0]
-       drb    = posp.x*v[0,1]+posp.y*v[1,1]+posp.z*v[2,1]
-       drc    = posp.x*v[0,2]+posp.y*v[1,2]+posp.z*v[2,2]
-       r_ell  = np.sqrt((dra / h.sh.a)**2 + (drb / h.sh.b)**2 + (drc / h.sh.c)**2)
-       rmax   = max(rmax,r_ell)
-       indexp = mem['linked_list_oo_1'][indexp]
-    
-    amax = rmax * h.sh.a * (1.0 + H.epsilon)
-    bmax = rmax * h.sh.b * (1.0 + H.epsilon)
-    cmax = rmax * h.sh.c * (1.0 + H.epsilon)
+    drxs = correct_for_periodicity_1d(ipos[:,0] - h.p.x)
+    drys = correct_for_periodicity_1d(ipos[:,1] - h.p.y)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - h.p.z)
+    # project position vector along the principal ellipsoid axis
+    dras = drxs*v[0,0] + drys*v[1,0] + drzs*v[2,0]
+    drbs = drxs*v[0,1] + drys*v[1,1] + drzs*v[2,1]
+    drcs = drxs*v[0,2] + drys*v[1,2] + drzs*v[2,2]
+    r_ells = np.sqrt((dras / h.sh.a)**2 + (drbs / h.sh.b)**2 + (drcs / h.sh.c)**2)
+    rmax = np.max(r_ells)
+
+    amax = rmax * h.sh.a * (1.0 + epsilon)
+    bmax = rmax * h.sh.b * (1.0 + epsilon)
+    cmax = rmax * h.sh.c * (1.0 + epsilon)
 
     # initialize loop quantities
     tabm2_o0[:] = 0
     tabk2_o0[:] = 0
     louped_parts = 0
-    indexp       = mem['first_part_oo_1'][h.my_number]
 
-    while (indexp != -1):
-        posp.x = mem['pos_10'][indexp,0] - h.p.x
-        posp.y = mem['pos_10'][indexp,1] - h.p.y
-        posp.z = mem['pos_10'][indexp,2] - h.p.z
-        correct_for_periodicity(posp)
-        # compute velocities in the halo frame adding in the Hubble flow
-        vt.x   = mem['vel_10'][indexp,0] - h.v.x + posp.x * H.Hub_pt
-        vt.y   = mem['vel_10'][indexp,1] - h.v.y + posp.y * H.Hub_pt
-        vt.z   = mem['vel_10'][indexp,2] - h.v.z + posp.z * H.Hub_pt
-        v2     = vt.x**2 + vt.y**2 + vt.z**2
-        # project position vector along the principal ellipsoid axis
-        dra    = posp.x*v[0,0]+posp.y*v[1,0]+posp.z*v[2,0]
-        drb    = posp.x*v[0,1]+posp.y*v[1,1]+posp.z*v[2,1]
-        drc    = posp.x*v[0,2]+posp.y*v[1,2]+posp.z*v[2,2]
-        # biggest ellipsoid is divided in nr concentric ellipsoid shells: we
-        # calculate below the ellipsoid bin in which each particle falls and fill up the 
-        # mass and energy tables accordingly
-        # NB: if by chance the most distant particle from the center is ON the shortest
-        #     axis, then r_ell is equal to 1-epsilon (one of the terms below is one and the others 0)
-        #     otherwise r_ell is between 0 and 1-epsilon and so we just multiply it by nr to 
-        #     find the ellipsoid shell containing the particle.
-        r_ell  = np.sqrt((dra / amax)**2 + (drb / bmax)**2 + (drc / cmax)**2)
-        i_ell  = int(r_ell*nr)
-        if (i_ell < nr):
-            if (H.allocated('mass_10')):
-                tabm2_o0[i_ell] += mem['mass_10'][indexp]
-                tabk2_o0[i_ell] += 0.5*mem['mass_10'][indexp]*v2
-            else:
-                tabm2_o0[i_ell] += +H.massp
-                tabk2_o0[i_ell] += +0.5*H.massp*v2
-        else:
-            louped_parts += 1
-
-        indexp = mem['linked_list_oo_1'][indexp]
+    # compute velocities in the halo frame adding in the Hubble flow
+    vtxs = ivel[:,0] - h.v.x + drxs*H.Hub_pt
+    vtys = ivel[:,1] - h.v.y + drys*H.Hub_pt
+    vtzs = ivel[:,2] - h.v.z + drzs*H.Hub_pt
+    v2 = vtxs**2 + vtys**2 + vtzs**2
+    # biggest ellipsoid is divided in nr concentric ellipsoid shells: we
+    # calculate below the ellipsoid bin in which each particle falls and fill up the 
+    # mass and energy tables accordingly
+    # NB: if by chance the most distant particle from the center is ON the shortest
+    #     axis, then r_ell is equal to 1-epsilon (one of the terms below is one and the others 0)
+    #     otherwise r_ell is between 0 and 1-epsilon and so we just multiply it by nr to 
+    #     find the ellipsoid shell containing the particle.
+    r_ells = np.sqrt((dras / amax)**2 + (drbs / bmax)**2 + (drcs / cmax)**2)
+    i_ells = (r_ells*nr).astype(int)
+    valid = i_ells < nr
+    np.add.at(tabm2_o0, i_ells[valid], imass[valid])
+    np.add.at(tabk2_o0, i_ells[valid], 0.5*imass[valid]*v2[valid])
+    louped_parts = np.sum(~valid)
 
     if (louped_parts  >  0):
        raise ValueError('> Problem in tab_props_inside : missed ',louped_parts,' particles\n')
 
-    srm = tabm2_o0[0]
-    srk = tabk2_o0[0]
-    for i1 in frange(1,nr-1):
-        srm      += tabm2_o0[i1]
-        srk      += tabk2_o0[i1]
-        tabm2_o0[i1] = srm
-        tabk2_o0[i1] = srk
-        # approximation based on appendix B of paper GALICS 1:
-        # better than 10-15 . accuracy on average
-        tabp2_o0[i1] = -0.3 * H.gravconst * tabm2_o0[i1]**2 * rf(h.sh.a**2,h.sh.b**2,h.sh.c**2)
+    np.cumsum(tabm2_o0, out=tabm2_o0)
+    np.cumsum(tabk2_o0, out=tabk2_o0)
+    # approximation based on appendix B of paper GALICS 1:
+    # better than 10-15 . accuracy on average
+    tabp2_o0 = -0.3 * H.gravconst * tabm2_o0**2 * rf(h.sh.a**2,h.sh.b**2,h.sh.c**2)
+
     # correct potential energy estimate for small halos which are calculated by direct summation 
     if (h.ep != tabp2_o0[nr-1]): tabp2_o0 = tabp2_o0/tabp2_o0[nr-1]*h.ep
-    # return tabm2_o0,tabk2_o0,tabp2_o0,amax,bmax,cmax
+    return tabm2_o0,tabk2_o0,tabp2_o0,amax,bmax,cmax
 
 #***********************************************************************
 
-def det_vir_props_1b4(h:halo,v,amax=0,bmax=0,cmax=0,ttab=1000):
+def det_vir_props_1b4(h:halo,v,amax=0,bmax=0,cmax=0,ttab=1000, member=None):
     '''
     computes the virial properties (radius, mass) of a halo
     '''
-    # integer(kind=4)           :: i,ii
-    # # ttab = 1000 bins for virial radius precision better than 1. of halo size 
-    # integer(kind=4),parameter :: ttab = 1000 
-    # real(kind=8)              :: rvir,mvir,kvir,pvir,v(3,3)
-    # real(kind=8)              :: amax,bmax,cmax,avir,bvir,cvir
-    # real(kind=8)              :: tab_mass_o0(0:ttab-1),tab_ekin_o0(0:ttab-1),tab_epot_o0(0:ttab-1)  ## double
-    tab_mass_o0 = np.zeros(ttab); tab_ekin_o0 = np.zeros(ttab); tab_epot_o0 = np.zeros(ttab)
-    # real(kind=8)              :: virth,virth_old,volmin
-    # type (halo)               :: h
-
     # compute properties inside ttab concentric principal ellipsoids centered on center of halo
-    tab_props_inside_1b40(h,ttab,tab_mass_o0,tab_ekin_o0,tab_epot_o0,v,amax,bmax,cmax)
+    tab_mass_o0,tab_ekin_o0,tab_epot_o0,amax,bmax,cmax = tab_props_inside_1b40(h,ttab,v, member=member)
+
 
     # find the outermost ellipsoid bin where virial theorem is either satisfied better than 20 .
     # or satisfied best ... 
     mvir      = tab_mass_o0[ttab-1]
-    kvir      = tab_ekin_o0[ttab-1]
-    pvir      = tab_epot_o0[ttab-1]
+    # kvir      = tab_ekin_o0[ttab-1]
+    # pvir      = tab_epot_o0[ttab-1]
     # initialize rvir to be the geometric average of the axis radii of the outermost ellipsoid shell
     # which contains at least one particle
     for i1 in frange(ttab-1,1,-1):
@@ -994,20 +932,21 @@ def det_vir_props_1b4(h:halo,v,amax=0,bmax=0,cmax=0,ttab=1000):
     rvir      = (avir*bvir*cvir)**(1./3.)
     # assume initial departure from virialization is 100 .
     virth_old = 1.0
+    virth = 100.0
     virths = np.abs((2.0*tab_ekin_o0+tab_epot_o0)/(tab_ekin_o0+tab_epot_o0))
-    i0 = np.where(virths <= 0.2)[0][-1]
-    virth = virths[i0]
-    mvir      = tab_mass_o0[i0] 
-    # take the min here bc initialization throws away all the empty outer shells
-    avir      = min(avir,i0/(ttab-1)*amax)
-    bvir      = min(bvir,i0/(ttab-1)*bmax)
-    cvir      = min(cvir,i0/(ttab-1)*cmax)
-    rvir      = (avir*bvir*cvir)**(1./3.)
-    kvir      = tab_ekin_o0[i0] 
-    pvir      = tab_epot_o0[i0]
-    virth_old = virth
-    print("#-----------#")
-    print(virth, mvir)
+    good_virth = virths <= 0.2
+    if good_virth.any():
+        i0 = np.where(good_virth)[0][-1]
+        virth = virths[i0]
+        if virth < virth_old:
+            mvir      = tab_mass_o0[i0] 
+            # take the min here bc initialization throws away all the empty outer shells
+            avir      = min(avir,i0/(ttab-1)*amax)
+            bvir      = min(bvir,i0/(ttab-1)*bmax)
+            cvir      = min(cvir,i0/(ttab-1)*cmax)
+            rvir      = (avir*bvir*cvir)**(1./3.)
+            # kvir      = tab_ekin_o0[i0] 
+            # pvir      = tab_epot_o0[i0]
     for i0 in frange(ttab-1,0,-1):
         # if region is unbound, it cannot be virialized in the same time 
         if( (tab_ekin_o0[i0]+tab_epot_o0[i0]) >= 0.0): continue
@@ -1021,15 +960,14 @@ def det_vir_props_1b4(h:halo,v,amax=0,bmax=0,cmax=0,ttab=1000):
             bvir      = min(bvir,i0/(ttab-1)*bmax)
             cvir      = min(cvir,i0/(ttab-1)*cmax)
             rvir      = (avir*bvir*cvir)**(1./3.)
-            kvir      = tab_ekin_o0[i0] 
-            pvir      = tab_epot_o0[i0]
+            # kvir      = tab_ekin_o0[i0] 
+            # pvir      = tab_epot_o0[i0]
             virth_old = virth
             # if virial theorem holds with better than 20 . accuracy, exit do loop
             if (virth <= 0.20): break
-    print(virth, mvir)
-    print("#-----------#")
+
  
-    # for small halos it may happen that virial theorem is not enforced to within 15 .
+    # for small halos it may happen that virial theorem is not enforced to within 15%.
     # bc the halo is not fully virialized yet or that it is valid by fluke (right combination
     # of potential and kinetic energy) ... so .... 
     # 1/ in the latter case, we further check that the halo density is high enough 
@@ -1050,11 +988,11 @@ def det_vir_props_1b4(h:halo,v,amax=0,bmax=0,cmax=0,ttab=1000):
             # is greater than vir_overdens * rho_mean AND there is at least one particle inside the outermost
             # ellipsoid shell
             mvir = H.vir_overdens * H.rho_mean * volmin * ii1**3
-            #mvir = 200d0 * 3d0*Hub_pt**2/8d0/acos(-1d0)/gravconst * volmin * ii1,4)**3
+            #mvir = 200d0 * 3d0*Hub_pt**2/8d0/acos(-1d0)/gravconst * volmin * ii1**3
             if( (tab_mass_o0[ii1] >= mvir)and(tab_mass_o0[ii1-1] < tab_mass_o0[ttab-1]) ): break
         mvir   = tab_mass_o0[ii1]
-        kvir   = tab_ekin_o0[ii1]
-        pvir   = tab_epot_o0[ii1]
+        # kvir   = tab_ekin_o0[ii1]
+        # pvir   = tab_epot_o0[ii1]
         avir   = ii1/(ttab-1)*amax
         bvir   = ii1/(ttab-1)*bmax
         cvir   = ii1/(ttab-1)*cmax
@@ -1092,38 +1030,29 @@ def compute_halo_profile_1b41(h:halo):
        raise NotImplementedError('Other profiles than TSIS not yet fully implemented')
 
 #***********************************************************************
-def det_vir_1b(h:halo, fagor:FortranFile=None):
+def det_vir_1b(h:halo, fagor:FortranFile=None, member=None):
     '''
     determine virial properties of the halos, energies and profiles
     '''
-    # type (halo)     :: h
-    # real(kind=8)    :: v(3,3)
-    # real(kind=8)    :: x0,y0,z0,r0
-    # #ifdef H.ANG_MOM_OF_R
-    # real(kind=8)    :: amax,bmax,cmax
-    # #endif
-    # integer         :: nx
-    v = np.zeros((3,3), dtype=np.float64)
-
     if(H.method != "FOF" and H.DPMMC):
         x0=h.p.x;y0=h.p.y;z0=h.p.z;r0=h.r
         nx=9 # The initial mesh have a size of 2 times the maximum radius (~virial radius)
-        det_halo_center_multiscale_1b0(h,x0,y0,z0,r0,nx)
+        det_halo_center_multiscale_1b0(h,x0,y0,z0,r0,nx, member=member)
     if(H.method != "FOF" and H.SC):
-        x0=h.p.x;y0=h.p.y;z0=h.p.z;r0=h.r
-        det_halo_center_sphere_1b1(h,x0,y0,z0,r0)
+        x0=h.p.x;y0=h.p.y;z0=h.p.z;r0=h.r*0.2
+        det_halo_center_sphere_1b1(h,x0,y0,z0,r0, member=member)
 
     # compute principal axis of halo
-    det_main_axis_1b2(h,v)
+    d,v = det_main_axis_1b2(h, member=member)
  
     # compute halo energies if necessary i.e. in the case where the center of the halo is the 
     # center of mass bc if it is the most bound particle then energies are already available  
-    det_halo_energies_1b3(h)
+    det_halo_energies_1b3(h, member=member)
 
     # compute virial properties based on conditions necessary for the virial theorem to apply
-    amax,bmax,cmax = det_vir_props_1b4(h,v)
+    amax,bmax,cmax = det_vir_props_1b4(h,v, member=member)
     if(H.ANG_MOM_OF_R):
-        det_ang_momentum_per_shell_1b5(h,amax,bmax,cmax,v,fagor=fagor)
+        det_ang_momentum_per_shell_1b5(h,amax,bmax,cmax,v,fagor=fagor, member=member)
         
 
 #***********************************************************************
@@ -1135,8 +1064,6 @@ def det_age_11():
     from num_rec import qromo, age_temps
     from functools import partial
     import scipy.integrate as integrate
-    # real(kind=8) :: age0,age1,somme0,somme1,omm,oml
-    # save age0
 
     omm  = H.omega_f
     oml  = H.omega_lambda_f
@@ -1181,7 +1108,6 @@ def virial_12():
     compute the overdensity factor for virialization in a tophat collapse model at a given redshift 
     for a given cosmological model
     '''
-    # real(kind=8) :: a,b,eta,omega_maxexp,age,reduce,cubic
     from num_rec import cubic
     
     # convert age of universe from Gyr back into inverse Hubble parameter units
@@ -1199,6 +1125,7 @@ def virial_12():
        reduce = cubic(a,0.0,b,1.0)
     
     H.vir_overdens = omega_maxexp/H.omega_f/reduce**3*(H.aexp/H.af)**3
+    # H.vir_overdens = 242.06830570398355 ##### BOOKMARK
     H.rho_mean     = H.mboxp/H.Lbox_pt**3
     print(f"> Virial overdensity             : {H.vir_overdens}")
     print(f"> Mean density (1e11 M_sun/Mpc3) : {H.rho_mean}")
@@ -1217,15 +1144,11 @@ def collapse_120(age0,omm,acc):
 
     third argument is the desired fractional accurracy.
     '''    
-    # real(kind=8)            :: age0,omm,acc,oml
-    # real(kind=8)            :: age,omax,omin,age_f
-    # real(kind=8), parameter :: omax0=1.d7,omin0=1.d0 
     # IMPORTANT NOTE: omax0 corresponds to a perturbation turning around at z=140 in a LCDM standard cosmology
     #                 and needs to be increased if you analyze outputs before this redshift ...
     from num_rec import age_temps_turn_around, qromo
     from functools import partial
     from scipy import integrate
-    # import time
 
     omax0=1.e7 ;omin0=1.e0; age_f=0
     age  = -1.0  # impossible value
@@ -1245,14 +1168,12 @@ def collapse_120(age0,omm,acc):
         func = partial(age_temps_turn_around, oml=oml, omm=omm)
         age_f = integrate.quad(func, 101, 10001)[0]
         age = integrate.quad(func, 1, 101)[0]
-
-        # print(f"|        age_f={age_f}")#debug
-        # print(f"|        age  ={age}")#debug
+        
         if(age+age_f > age0):
             omin = omm
         else:
             omax = omm
-    # print("-----------------------------")#debug
+
     if( (omax==omax0)or(omin==omin0) ):
         print('WARNING: presumed bounds for omega are inadequate in collapse.')
         print('WARNING: omax,omax0,omin,omin0=',omax,omax0,omin,omin0)
@@ -1267,62 +1188,43 @@ def change_units_15():
     '''
     mem['pos_10']   *= H.Lbox_pt
     if(type == 'SN'): mem['vel_10'] *= H.Hub_pt*H.Lbox_pt
-    massp = massp * H.mboxp
+    H.massp = H.massp * H.mboxp
     if (H.allocated('mass_10')): mem['mass_10']  *= H.mboxp
 
 #***********************************************************************
-def det_halo_energies_1b3(h:halo, full_PE=1000):
-    # integer(kind=4)           :: indexp,indexpp,np
-    # integer(kind=4),parameter :: full_PE = 1000 # below this number of parts, we calculate full potential energy 
-    # real(kind=8)              :: v2,rf          # rf is elliptic integral function from numrec
-    # real(kind=8)              :: ped,ked        # need hi precision for potential and ke energy sum.   
-    # logical(kind=4)           :: count_pairs
-    # type (halo)               :: h
-    # type (vector)             :: vt,dr
+def det_halo_energies_1b3(h:halo, full_PE=1000, member=None):
     from num_rec import rf
+    count, _, ipos, ivel, imass, _ = member
 
-    vt = vector(); dr = vector()
     inp          = mem['nb_of_parts_o0_1'][h.my_number]
     count_pairs = (inp < full_PE)
     # get potential energy 
     if (not count_pairs):
-       # formula B1 of appendix of paper GalICS 1 :
-       # EP = -3/5 G M^2 Rf, 
-       # with Rf = 0.5 * Int_0^infty dt/sqrt((t+x)(t+y)(t+z)) = 0.5 * rf_numrec
-       # NB : rf_numrec returns RF in inverse Mpc (because x is in Mpc^2)
-       h.ep = (-0.3) * H.gravconst * h.m**2 * rf(h.sh.a**2,h.sh.b**2,h.sh.c**2)
+        # formula B1 of appendix of paper GalICS 1 :
+        # EP = -3/5 G M^2 Rf, 
+        # with Rf = 0.5 * Int_0^infty dt/sqrt((t+x)(t+y)(t+z)) = 0.5 * rf_numrec
+        # NB : rf_numrec returns RF in inverse Mpc (because x is in Mpc^2)
+        h.ep = (-0.3) * H.gravconst * h.m**2 * rf(h.sh.a**2,h.sh.b**2,h.sh.c**2)
     else:
-       indexp = mem['first_part_oo_1'][h.my_number]
-       ped    = 0
-       while (indexp != -1):
-          indexpp = mem['linked_list_oo_1'][indexp] # only count pairs once
-          while (indexpp != -1):
-             ped     += interact_1b30(indexp,indexpp)
-             indexpp = mem['linked_list_oo_1'][indexpp]
-          indexp = mem['linked_list_oo_1'][indexp]
-       h.ep = ped * H.gravconst / H.Lbox_pt
+        # Direct summation of the potential energy over all pairs of particles in the halo
+        comb = list(combinations(np.arange(inp), 2)) # only count pairs once
+        drs = np.squeeze(np.diff(ipos[comb], axis=1))
+        dists = np.sqrt(np.sum(drs**2, axis=1))/H.Lbox_pt
+        ms = np.prod(imass[comb], axis=1)
+        ped = np.sum(-ms / dists)
+        h.ep = ped * H.gravconst / H.Lbox_pt
 
     # get kinetic energy (in center-of-halo frame)
-    indexp = mem['first_part_oo_1'][h.my_number]
-    ked    = 0
-    while (indexp != -1):
-       vt.x = mem['vel_10'][indexp,0] - h.v.x
-       vt.y = mem['vel_10'][indexp,1] - h.v.y
-       vt.z = mem['vel_10'][indexp,2] - h.v.z
-       dr.x = mem['pos_10'][indexp,0] - h.p.x
-       dr.y = mem['pos_10'][indexp,1] - h.p.y
-       dr.z = mem['pos_10'][indexp,2] - h.p.z
-       correct_for_periodicity(dr)
-       # add Hubble flow 
-       vt.x = vt.x + dr.x * H.Hub_pt
-       vt.y = vt.y + dr.y * H.Hub_pt
-       vt.z = vt.z + dr.z * H.Hub_pt
-       v2   = vt.x**2 + vt.y**2 + vt.z**2
-       if (H.allocated('mass_10')):
-          ked += mem['mass_10'][indexp]*v2
-       else:
-          ked += H.massp*v2
-       indexp  = mem['linked_list_oo_1'][indexp]
+    drxs = correct_for_periodicity_1d(ipos[:,0] - h.p.x)
+    drys = correct_for_periodicity_1d(ipos[:,1] - h.p.y)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - h.p.z)
+    # add Hubble flow 
+    vtsx = ivel[:,0] - h.v.x + drxs * H.Hub_pt
+    vtsy = ivel[:,1] - h.v.y + drys * H.Hub_pt
+    vtsz = ivel[:,2] - h.v.z + drzs * H.Hub_pt
+    v2s = vtsx**2 + vtsy**2 + vtsz**2
+    ked = np.sum(imass * v2s)
+
     h.ek = 0.5*ked
     # get total energy 
     h.et = h.ek + h.ep
@@ -1330,16 +1232,12 @@ def det_halo_energies_1b3(h:halo, full_PE=1000):
     return
 
 #***********************************************************************
-def det_halo_center_multiscale_1b0(h:halo,x0,y0,z0,r0,nx):
+def det_halo_center_multiscale_1b0(h:halo,x0,y0,z0,r0,nx, member=None):
     '''
     The initial guesss of the C.O.M. was calculated by det_center().
     '''
-    # integer(kind=4)           :: indexp
-    # type (halo)               :: h
-    # integer                   :: ii,jj,kk,imax,jmax,kmax,itarget,nx,nxnew
-    # real(kind=8)              :: xmin,ymin,zmin,deltax,mass_max
-    # real(kind=8)              :: x0,y0,z0,r0,xc,yc,zc
-    # real(kind=8),dimension(:,:,:),allocatable:: mass_grid
+    pos_10 = mem['pos_10']    
+    count, indexps, ipos, _, imass, idensity = member
 
     mass_grid = np.zeros((nx,nx,nx), dtype=np.float64)
 
@@ -1349,222 +1247,142 @@ def det_halo_center_multiscale_1b0(h:halo,x0,y0,z0,r0,nx):
     deltax=2*r0/nx
 
     # Assign mass to a uniform mesh with NGP
-    indexp = mem['first_part_oo_1'][h.my_number]
-    while (indexp != -1):
-        ii= int( (mem['pos_10'][indexp,1] - xmin)/deltax )+1
-        jj= int( (mem['pos_10'][indexp,2] - ymin)/deltax )+1
-        kk= int( (mem['pos_10'][indexp,3] - zmin)/deltax )+1
-        if( (ii>0)and(ii<=nx)and(jj>0)and(jj<=nx)and(kk>0)and(kk<=nx) ):
-            if (H.allocated('mass_10')):
-                mass_grid[ii,jj,kk] += mem['mass_10'][indexp]
-            else:
-                mass_grid[ii,jj,kk] += H.massp
-        indexp  = mem['linked_list_oo_1'][indexp]
+    iis = ((ipos[:,0] - xmin)/deltax).astype(int)
+    jjs = ((ipos[:,1] - ymin)/deltax).astype(int)
+    kks = ((ipos[:,2] - zmin)/deltax).astype(int)
+    valid = (iis >= 0) & (iis < nx) & (jjs >= 0) & (jjs < nx) & (kks >= 0) & (kks < nx)
+    iis = iis[valid]
+    jjs = jjs[valid]
+    kks = kks[valid]
+    iids = indexps[valid]
+    imass = imass[valid]
+    mass_grid = np.zeros((nx,nx,nx), dtype=np.float64)
+    np.add.at(mass_grid, (iis, jjs, kks), imass)
 
     # Search for the cell containing the maximum mass
     mass_max = np.max(mass_grid)
     imax,jmax,kmax = np.where(mass_grid == mass_max)
     imax = imax[0]; jmax = jmax[0]; kmax = kmax[0]
-    del mass_grid
-
-
-    #if(deltax > 0.02*h.r)then
-    #if(deltax > 2.0*dcell_min)then
 
     nxnew=3
     if(deltax > nxnew*H.dcell_min):
-        xc=xmin+(imax-0.5)*deltax
-        yc=ymin+(jmax-0.5)*deltax
-        zc=zmin+(kmax-0.5)*deltax
-        det_halo_center_multiscale_1b0(h,xc,yc,zc,deltax,nxnew)
+        xc=xmin+(imax+0.5)*deltax
+        yc=ymin+(jmax+0.5)*deltax
+        zc=zmin+(kmax+0.5)*deltax
+        det_halo_center_multiscale_1b0(h,xc,yc,zc,deltax,nxnew, member=member)
     else:
         # Find the particle with the maximum density within 
         # the cell with the maximum mass
         mass_max=0.0
-        indexp = mem['first_part_oo_1'][h.my_number]
-        while (indexp != -1):
-            ii= int( (mem['pos_10'][indexp,1] - xmin)/deltax )+1
-            if(ii==imax):
-                jj= int( (mem['pos_10'][indexp,2] - ymin)/deltax )+1
-                if(jj==jmax):
-                    kk= int( (mem['pos_10'][indexp,3] - zmin)/deltax )+1
-                    if(kk==kmax):         
-                        if(mem['density_1312'][indexp]>mass_max):
-                            mass_max=mem['density_1312'][indexp]
-                            itarget=indexp
-            indexp  = mem['linked_list_oo_1'][indexp]
+        argmax = np.argmax(idensity)
+        itarget = iids[argmax]
+
         # Assign the new halo center
-        h.p.x=mem['pos_10'][itarget,1]
-        h.p.y=mem['pos_10'][itarget,2]
-        h.p.z=mem['pos_10'][itarget,3]
+        h.p.x=pos_10[itarget,0]
+        h.p.y=pos_10[itarget,1]
+        h.p.z=pos_10[itarget,2]
 
 #***********************************************************************
-def det_halo_center_sphere_1b1(h:halo,x0,y0,z0,r0):
-    # integer(kind=4)    :: indexp,ifirst,itarget
-    # type (halo)        :: h
-    # integer            :: nxnew
-    # real(kind=8)       :: x0,y0,z0,r0,r02,xc,yc,zc,mtot
-    # real(kind=4)       :: distmin
-    # real(kind=8)       :: pcx,pcy,pcz,dr2,deltax
-    # type(vector)       :: dr,pc
+def det_halo_center_sphere_1b1(h:halo,x0,y0,z0,r0, member=None):
+    pos_10 = mem['pos_10']
+    count, indexps, ipos, _, imass, _ = member
 
     r02=r0*r0
-    dr = vector(); pc = vector()
 
     # compute cdm
-    pcx   = 0 ; pcy   = 0 ; pcz = 0 ; mtot=0
-    ifirst = mem['first_part_oo_1'][h.my_number]
-    indexp = ifirst
-    while (indexp != -1):
-        dr.x = mem['pos_10'][indexp,1] - x0
-        dr.y = mem['pos_10'][indexp,2] - y0
-        dr.z = mem['pos_10'][indexp,3] - z0
-        correct_for_periodicity(dr)
-        dr2=    dr.x*dr.x
-        if(dr2 <= r02):
-            dr2=dr2+dr.y*dr.y
-            if(dr2 <= r02):
-                dr2=dr2+dr.z*dr.z
-                if(dr2 <= r02):
-                    if(H.allocated('mass_10')):
-                        pcx += mem['mass_10'][indexp]*dr.x
-                        pcy += mem['mass_10'][indexp]*dr.y
-                        pcz += mem['mass_10'][indexp]*dr.z
-                        mtot+= mem['mass_10'][indexp]
-                    else:
-                        pcx += H.massp*dr.x
-                        pcy += H.massp*dr.y
-                        pcz += H.massp*dr.z
-                        mtot+= H.massp
-        indexp = mem['linked_list_oo_1'][indexp]
+    mtot=0
+    drxs = correct_for_periodicity_1d(ipos[:,0] - x0)
+    drys = correct_for_periodicity_1d(ipos[:,1] - y0)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - z0)
+    dr2 = drxs**2 + drys**2 + drzs**2
+    rmask = dr2 <= r02
+    drxs = drxs[rmask]; drys = drys[rmask]; drzs = drzs[rmask]; imass = imass[rmask]
+    pcx = np.sum(imass*drxs)
+    pcy = np.sum(imass*drys)
+    pcz = np.sum(imass*drzs)
+    mtot = np.sum(imass)
+
     if(mtot > 0):
-       xc  = pcx / mtot + x0
-       yc  = pcy / mtot + y0
-       zc  = pcz / mtot + z0
+        xc  = pcx / mtot + x0
+        yc  = pcy / mtot + y0
+        zc  = pcz / mtot + z0
     else:
-       xc = x0
-       yc = y0
-       zc = z0   
+        xc = x0
+        yc = y0
+        zc = z0   
 
     if(r0 > H.dcell_min and mtot>0):
-       det_halo_center_sphere_1b1(h,xc,yc,zc,(1-H.eps_SC)*r0)
+        det_halo_center_sphere_1b1(h,xc,yc,zc,(1-H.eps_SC)*r0, member=member)
     else:
-       pc.x = xc
-       pc.y = yc
-       pc.z = zc
-       correct_for_periodicity(pc)
-       # search particule closest to the cdm
-       distmin = r02
-       itarget = -1
-       while (itarget == -1):
-          indexp  = ifirst
-          while (indexp != -1):
-             dr.x = mem['pos_10'][indexp,1] - pc.x
-             dr.y = mem['pos_10'][indexp,2] - pc.y
-             dr.z = mem['pos_10'][indexp,3] - pc.z
-             correct_for_periodicity(dr)
-             dr2=dr.x**2+dr.y**2+dr.z**2
-             if (dr2 < distmin):
-                itarget = indexp
-                distmin = dr2
-             indexp = mem['linked_list_oo_1'][indexp]
-          distmin=distmin*2**2
-          if(distmin > 1.0): raise ValueError(f'distmin(={distmin}) > 1')
-       # Assign the new halo center
-       h.p.x=mem['pos_10'][itarget,1]
-       h.p.y=mem['pos_10'][itarget,2]
-       h.p.z=mem['pos_10'][itarget,3]
+        # search particule closest to the cdm
+        drxs = correct_for_periodicity_1d(ipos[:,0] - xc)
+        drys = correct_for_periodicity_1d(ipos[:,1] - yc)
+        drzs = correct_for_periodicity_1d(ipos[:,2] - zc)
+        dr2 = drxs**2 + drys**2 + drzs**2
+        argmin = np.argmin(dr2)
+        # itarget = indexps[argmin]
+        distmin = dr2[argmin]
+        if(distmin > 1.0): raise ValueError(f'distmin(={distmin}) > 1')
+
+        # Assign the new halo center
+        # h.p.x=pos_10[itarget,0]
+        # h.p.y=pos_10[itarget,1]
+        # h.p.z=pos_10[itarget,2]
+        h.p.x=ipos[argmin,0]
+        h.p.y=ipos[argmin,1]
+        h.p.z=ipos[argmin,2]
 
 #***********************************************************************
 def compute_spin_parameter_1c(h:halo):
-    # real(kind=8)                :: hl,spin
-    # type (halo)                 :: h
-
-    hl                  = h.L.x**2 + h.L.y**2 + h.L.z**2
-    hl                  = np.sqrt(hl)        
-    spin                = hl * np.sqrt(abs(h.et)) / h.m**2.5
-    spin                = spin / H.gravconst
+    hl                  = np.sqrt(h.L.x**2 + h.L.y**2 + h.L.z**2)
+    spin                = hl * np.sqrt(np.abs(h.et)) / h.m**2.5 / H.gravconst
     h.spin              = spin
 
 #***********************************************************************
-def det_inertial_tensor_1b20(h:halo,mat:np.ndarray):
+def det_inertial_tensor_1b20(h:halo, member=None):
     '''
     Compute inertial tensor with respect to center of halo (either cdm or mbp)
     '''
-    # integer(kind=4) :: num_h,indexp
-    # real(kind=8)    :: mat(1:3,1:3)
-    # real(kind=8)    :: md(1:3,1:3)
-    # type (vector)   :: dr
-    # type (halo)     :: h
+    _, _, ipos, _, imass, _ = member
 
-    indexp = mem['first_part_oo_1'][h.my_number]
-    dr = vector()
-
-    while (indexp != -1):
-        dr.x=mem['pos_10'][indexp,1]-h.p.x
-        dr.y=mem['pos_10'][indexp,2]-h.p.y
-        dr.z=mem['pos_10'][indexp,3]-h.p.z
-
-        correct_for_periodicity(dr)
-
-        if (H.allocated('mass_10')):
-            mat[0,0] += mem['mass_10'][indexp]*dr.x*dr.x
-            mat[0,1] += mem['mass_10'][indexp]*dr.x*dr.y
-            mat[0,2] += mem['mass_10'][indexp]*dr.x*dr.z
-            mat[1,0] += mem['mass_10'][indexp]*dr.x*dr.y
-            mat[1,1] += mem['mass_10'][indexp]*dr.y*dr.y
-            mat[1,2] += mem['mass_10'][indexp]*dr.y*dr.z
-            mat[2,0] += mem['mass_10'][indexp]*dr.x*dr.z
-            mat[2,1] += mem['mass_10'][indexp]*dr.y*dr.z
-            mat[2,2] += mem['mass_10'][indexp]*dr.z*dr.z
-        else:
-            mat[0,0] += H.massp*dr.x*dr.x
-            mat[0,1] += H.massp*dr.x*dr.y
-            mat[0,2] += H.massp*dr.x*dr.z
-            mat[1,0] += H.massp*dr.x*dr.y
-            mat[1,1] += H.massp*dr.y*dr.y
-            mat[1,2] += H.massp*dr.y*dr.z
-            mat[2,0] += H.massp*dr.x*dr.z
-            mat[2,1] += H.massp*dr.y*dr.z
-            mat[2,2] += H.massp*dr.z*dr.z
-
-        indexp = mem['linked_list_oo_1'][indexp]
+    drxs = correct_for_periodicity_1d(ipos[:,0] - h.p.x)
+    drys = correct_for_periodicity_1d(ipos[:,1] - h.p.y)
+    drzs = correct_for_periodicity_1d(ipos[:,2] - h.p.z)
+    mat = np.zeros((3,3), dtype=np.float64)
+    mat[0,0] = np.sum(imass*drxs*drxs)
+    mat[0,1] = np.sum(imass*drxs*drys)
+    mat[0,2] = np.sum(imass*drxs*drzs)
+    mat[1,0] = np.sum(imass*drxs*drys)
+    mat[1,1] = np.sum(imass*drys*drys)
+    mat[1,2] = np.sum(imass*drys*drzs)
+    mat[2,0] = np.sum(imass*drxs*drzs)
+    mat[2,1] = np.sum(imass*drys*drzs)
+    mat[2,2] = np.sum(imass*drzs*drzs)
+    return mat
 
 #***********************************************************************
-def det_main_axis_1b2(h:halo,v):
+def det_main_axis_1b2(h:halo, member=None):
     '''
     determine the principal axis of the halo (h.sh.a,b,c)
     '''
-    # integer(kind=4) :: nrot
-    # real(kind=8)    :: mat(1:3,1:3)
-    # real(kind=8)    :: d(3),v(3,3)
-    # type (halo)     :: h
-    from num_rec import jacobi
+    # from num_rec import jacobi
+    from scipy.linalg import eigh
 
-    mat = np.zeros((3,3), dtype=np.float64)
-    det_inertial_tensor_1b20(h,mat)
+    mat = det_inertial_tensor_1b20(h, member=member)
 
-    d,v = jacobi(mat)
-
+    # d,v = jacobi(mat.copy())
+    d, v = eigh(mat)
     d      = np.sqrt(d/h.m)
     h.sh.a = d[0]
     h.sh.b = d[1]
     h.sh.c = d[2]
+    return d,v
 
 #***********************************************************************
-def det_ang_momentum_per_shell_1b5(h,amax,bmax,cmax,v,fagor:FortranFile=None):    
-    # integer(kind=4) :: indexp
-    # type(halo)      :: h
-    # type(vector)    :: dr, dv
+def det_ang_momentum_per_shell_1b5(h,amax,bmax,cmax,v,fagor:FortranFile=None, member=None):    
     dr=vector();dv=vector()
-    # real(kind=8)    :: amax,bmax,cmax,v(3,3) # computed in tab_props_inside
-    # real(kind=8)    :: dra, drb, drc, r_ell
-    # integer(kind=4) :: i_ell
-    # type(vector)    :: L(nshells)  # ang mom of a shell (in 10**11 Msun * km/s * Mpc)
     L = [vector() for _ in range(H.nshells)]
-    # real(kind=8)    :: m(nshells)  # mass of a shell (in 10**11 Msun)
     m = np.zeros(H.nshells, dtype=np.float64)
-    # integer(kind=4) :: i
 
     for i0 in range(H.nshells):
        L[i0].x = 0.0

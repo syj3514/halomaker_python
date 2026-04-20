@@ -22,3 +22,7 @@ DPMMC          = .false.  ! Activate the densest point in the most massive cell
 SC             = .true.   ! Activate the com in concentric spheres
 dcell_min      = 0.001    ! smallest possible cell size in Mpc
 eps_SC         = 0.3      ! Reduction fraction of the concentric shpere radius (only used in finding halo center)
+dchmod         = 775      ! chmod for directories/scripts (Default: 755)
+fchmod         = 664      ! chmod for regular files (Default: 644)
+uid            = -1       ! change uid unless -1
+gid            = 20005       ! change gid unless -1

@@ -121,8 +121,8 @@ def read_ramses_100(repository):
     # e.g. /horizon1/teyssier/ramses_simu/boxlen100_n256/output_00001/
     '''
     atexit.unregister(H.flush)
-    signal.signal(signal.SIGINT, H.flush)
-    signal.signal(signal.SIGPIPE, H.flush)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)#, H.flush)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)#, H.flush)
     signal.signal(signal.SIGTERM, H.flush)
     # read cosmological params in header of amr file
     ipos    = repository.find("output_")
@@ -311,8 +311,8 @@ def read_ramses_new_101(repository, rver='Ra3'):
     # e.g. /horizon1/teyssier/ramses_simu/boxlen100_n256/output_00001/
     '''
     atexit.unregister(H.flush)
-    signal.signal(signal.SIGINT, H.flush)
-    signal.signal(signal.SIGPIPE, H.flush)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)#, H.flush)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)#, H.flush)
     signal.signal(signal.SIGTERM, H.flush)
     print()
     print(f"\t---------------------------------")
@@ -483,23 +483,13 @@ def write_tree_brick_1d():
          particle numbers are time independent --- to follow the halo history) 
       2/ its properties which are independent of merging history (mass ...)
     '''
-#     integer(kind=4)                                         :: i,unitfile,start,j,idim,ndim=3
-#     character(LEN=5)                                        :: nchar
-#     character(LEN=7)                                        :: ncharg
-#     character(LEN=300)                                      :: nomfich
-# #ifndef H.BIG_RUN
-#     character(len=len_trim(H.data_dir)+16)                    :: file
-# #endif
-#     character(len=len_trim(H.data_dir)+len_trim(H.file_num)+11) :: filename
-#     integer(kind=4) ,allocatable                            :: members(:)
-#     real(kind=8) ,allocatable                            :: mass_memb(:),mdump(:)
-#     real(kind=8) ,allocatable                            :: pos_memb(:,:),vel_memb(:,:)
-#     logical                                                 :: done
     import os
     nchar   = f'{int(H.file_num):05d}'
     if(H.dump_dms):
         #    call system('mkdir HAL_'//TRIM(nchar))
         os.mkdir(f'HAL_{nchar}')    
+        full_path = os.path.abspath(f'HAL_{nchar}')
+        os.chmod(full_path, H.dchmod); os.chown(full_path, H.uid, H.gid)
 
     done = False
     if(H.BIG_RUN):
@@ -508,21 +498,23 @@ def write_tree_brick_1d():
             f44.write_record(H.nbodies)
             f44.write_record(mem['mass_10'])
             f44.close()
+            full_path = os.path.abspath(f'{H.data_dir}/resim_masses.dat')
+            os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
 
     if(not H.fsub):
         filename = f"{H.data_dir}/tree_brick_{nchar}"
     else:
-        filename = f"{H.data_dir}/tree_bricks_{nchar}"
+        filename = f"{H.data_dir}/tree_bricks{nchar}"
     f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)
-    f44.write_record(H.nbodies)
-    f44.write_record(H.massp)
-    f44.write_record(H.aexp)
-    f44.write_record(H.omega_t)
-    f44.write_record(H.age_univ)
-    f44.write_record(H.nb_of_halos, H.nb_of_subhalos)
+    f44.write_record(H.nbodies); print((H.nbodies))
+    f44.write_record(H.massp); print((H.massp))
+    f44.write_record(H.aexp); print((H.aexp))
+    f44.write_record(H.omega_t); print((H.omega_t))
+    f44.write_record(H.age_univ); print((H.age_univ))
+    f44.write_record(H.nb_of_halos, H.nb_of_subhalos); print((H.nb_of_halos, H.nb_of_subhalos))
     for i0 in range(H.nb_of_halos + H.nb_of_subhalos):
         # write list of particles in each halo
         members = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.int32)
@@ -543,7 +535,7 @@ def write_tree_brick_1d():
                 vel_memb[j0,1]=mem['vel_10'][start-1,1]
                 vel_memb[j0,2]=mem['vel_10'][start-1,2]
             start = mem['linked_list_oo_1'][start]
-        f44.write_record(mem['nb_of_parts_o0_1'][i0+1])
+        f44.write_record(mem['nb_of_parts_o0_1'][i0+1]); print(mem['nb_of_parts_o0_1'][i0+1])
         f44.write_record(members)
 
         if(H.dump_dms):
@@ -566,11 +558,16 @@ def write_tree_brick_1d():
             f9.write_record( mass_memb )
             f9.write_record( members )
             del mass_memb; del pos_memb; del vel_memb; del mdump
+            f9.close()
+            full_path = os.path.abspath(nomfich)
+            os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
         del members
         # write each halo properties
         write_halo_1d0(H.liste_halos_o0[i0+1],f44)
     f44.close()
+    full_path = os.path.abspath(filename)
+    os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
 #***********************************************************************
 def write_halo_1d0(h:halo,unitfile:FortranFile):

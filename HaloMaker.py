@@ -34,11 +34,23 @@ print("Usage: python HaloMaker.py [data_dir]")
 if(len(sys.argv)<2): H.data_dir = '.'
 else: H.data_dir = sys.argv[1]
 # initialize cosmological and technical parameters of the N_Body simulation 
-print("\n[          init_cosmo          ]")
+print( )
+print( '_______________________________________________________________________'  )
+print( )
+print("          Initialization")
+print("          --------------")
+print( )
+print( '_______________________________________________________________________'  )
 compute_halo_props.init_0()
 
 # loop over snapshots
-print("\n[      loop over snapshots     ]")
+print( )
+print( '_______________________________________________________________________'  )
+print( )
+print("          Loop over snapshots")
+print("          -------------------")
+print( )
+print( '_______________________________________________________________________'  )
 for istep1 in range(1,H.nsteps+1,1):
     H.numero_step = istep1
     compute_halo_props.new_step_1()

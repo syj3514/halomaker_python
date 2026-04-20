@@ -5,7 +5,7 @@ from scipy.io import FortranFile
 from tqdm import tqdm
 import time
 import atexit, signal
-import sys
+import sys, os
 
 
 #======================================================================
@@ -15,9 +15,10 @@ RENORM = False
 BIG_RUN = False
 METALS = True
 TQDM = True
-DEV = True
+DEV = False
 ANG_MOM_OF_R = False
 Test_FOF = False
+SCIPY = True
 
 #======================================================================
 # Memory allocation
@@ -47,6 +48,51 @@ def maccess(name):
     temp, shape, dtype = mem_address[name]
     return np.ndarray(shape, dtype=dtype, buffer=temp.buf)
 
+def mlist():
+    global mem_address
+    rows = []
+    for name in mem_address.keys():
+        shape = mem_address[name][1]
+        dtype = mem_address[name][2]
+        dtype_str = getattr(dtype, "name", str(dtype))
+        filesize_MB = mem_address[name][0].size / (1024*1024)
+        rows.append((name, filesize_MB, str(shape).replace(' ', ''), dtype_str))
+    if len(rows)==0: return
+
+    name_w  = max(len(r[0]) for r in rows)
+    size_w  = max(len(f"{r[1]:.2f}") for r in rows)+3
+    shape_w = max(len(r[2]) for r in rows)
+    dtype_w = max(len(r[3]) for r in rows)
+
+    header = (
+        f"{'name':<{name_w}}  "
+        f"{'MB':>{size_w}}  "
+        f"{'shape':<{shape_w}}  "
+        f"{'dtype':<{dtype_w}}"
+    )
+    print("-" * len(header))
+    print("Memory Allocations:")
+    print(header)
+    print("-" * len(header))
+    size_total = 0
+    for name, size_mb, shape_str, dtype_str in rows:
+        print(
+            f"{name:<{name_w}}  "
+            f"{size_mb:>{size_w}.2f}  "
+            f"{shape_str:<{shape_w}}  "
+            f"{dtype_str:<{dtype_w}}"
+        )
+        size_total += size_mb
+    if size_total > 1000:
+        size_total /= 1024
+        print(f" (Total size in GB)")
+    print()
+    print(
+        f"{'TOTAL':<{name_w}}  "
+        f"{size_total:>{size_w}.2f} GB  "
+    )
+    print("-" * len(header))
+
 
 def allocate(name, shape, dtype=np.float64):
     global mem, mem_address
@@ -57,9 +103,10 @@ def allocate(name, shape, dtype=np.float64):
     if(name in mem_address.keys()):
         if(mem_address[name] is not None):
             raise Exception(f"\t@Memory address `{name}` already exists")
-    mem_address[name] = [temp, arr.shape, dtype]
-    mem[name] = np.ndarray(arr.shape, dtype=dtype, buffer=mem_address[name][0].buf)
+    mem_address[name] = [temp, arr.shape, arr.dtype]
+    mem[name] = np.ndarray(arr.shape, dtype=arr.dtype, buffer=mem_address[name][0].buf)
     arr = None
+    return mem[name]
 
 def allocated(name):
     global mem
@@ -127,6 +174,8 @@ def datdump(data, path, msg=False):
     with open(path, "wb") as f:
         f.write(leng.to_bytes(4, byteorder='little'))
         f.write(data.tobytes())
+    full_path = os.path.abspath(path)
+    os.chmod(full_path, fchmod); os.chown(full_path, uid, gid)
     if(msg): print(f" `{path}` saved")
 
 def datload(path, dtype='f8', msg=False):
@@ -260,6 +309,8 @@ class halo:
             f.write_record(self.datas.rvir,self.datas.mvir,self.datas.tvir,self.datas.cvel)
             f.write_record(self.halo_profile.rho_0,self.halo_profile.r_c,self.halo_profile.cNFW)
             f.write_record(self.E.mcontam)
+        full_path = os.path.abspath(fname)
+        os.chmod(full_path, fchmod); os.chown(full_path, uid, gid)
 #======================================================================
 
 
@@ -291,13 +342,19 @@ file_num = "00001"
 numstep = 1
 # errunit = 0
 write_resim_masses = True # for writing resim_masses.dat file
+dchmod = 0o755
+fchmod = 0o644
+uid = -1
+gid = -1
+
 #======================================================================
 
 
 #======================================================================
 # Constants
 #======================================================================
-gravconst = np.float64(4.302e-6) # G in units of (km/s)^2 kpc/(10^11 Msol)
+# gravconst = np.float64(4.302e-6) # G in units of (km/s)^2 kpc/(10^11 Msol)
+gravconst = np.float64(430.1) # G in units of (km/s)^2 kpc/(10^11 Msol)
 pi = np.pi
 #======================================================================
 
@@ -313,10 +370,10 @@ omega_t,omega_lambda_t,omega_f,omega_lambda_f,omega_c_f = np.float64(0.0), np.fl
 rho_crit,aexp,Lboxp,mboxp,af,ai,Lf,H_f,H_i = np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0)
 age_univ,Lbox_pt,Lbox_pt2,Hub_pt,omega_0,hubble,omega_lambda_0 = np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0),np.float64(0.0)
 vir_overdens,rho_mean = np.float64(0.0), np.float64(0.0)
-#   integer(kind=4),allocatable      :: linked_list_oo(:), liste_parts(:)
+#   integer(kind=4),allocatable      :: linked_list_oo(:), whereIam_parts(:)
 #   integer(kind=4),allocatable      :: first_part_oo(:),nb_of_parts_o0(:)
 #   type (halo),allocatable          :: liste_halos_o0(:)
-phsmooth_oo: np.ndarray[np.float64, 2+ninterp] = np.zeros(2+ninterp)
+phsmooth_oo: np.ndarray[np.float64] = np.zeros(2+ninterp)
 nb_of_halos, nb_of_subhalos = 0, 0
 numero_step = 1
 simtype = 'Ra3'
@@ -329,7 +386,7 @@ simtype = 'Ra3'
 nparmax=512*512*512
 nparbuffer=128**3
 ncellbuffermin=128**3
-nlevelmax=30; npartpercell=20
+nlevelmax=30; npartpercell=100
 lin=10; lsin=11; lin2=12
 loudis=12; lounei=13; lounode=14; loupartnode=15; lounodedyn=16
 bignum=1.e30
@@ -339,27 +396,9 @@ critical_density= np.float64(1.8788e-26)
 mega_parsec=np.float64(3.0857e22)
 solar_mass=np.float64(1.989e30)
 convert_in_mps2=np.float64(1.e6)
-#    real(kind=8), allocatable    :: vxout(:),vyout(:),vzout(:),vdisout(:)
-#    integer(kind=4), allocatable :: mass_cell(:)
-#    real(kind=8), allocatable    :: tmass_cell(:)
-#    real(kind=8), allocatable    :: vcell(:,:)
-#    real(kind=8), allocatable    :: size_cell(:)
-#    real(kind=8), allocatable    :: pos_cell(:,:)
-#    integer(kind=4), allocatable :: sister(:)
-#    integer(kind=4), allocatable :: firstchild(:)
-#    integer(kind=4), allocatable :: idpart(:),idpart_tmp(:)
-#    integer(kind=4), allocatable :: iparneigh(:,:)
-#    real(kind=8), allocatable    :: distance(:)
-#    real(kind=8), allocatable    :: density(:)
-#    integer(kind=4), allocatable :: firstpart(:)
-#    integer(kind=4), allocatable :: igrouppart(:)
-#    integer(kind=4), allocatable :: idgroup(:),idgroup_tmp(:)
-#    integer(kind=4), allocatable :: igroupid(:)
-#    integer(kind=4), allocatable :: color(:)
-#    integer(kind=4), allocatable :: partnode(:)
-#    real(kind=8), allocatable    :: densityg(:)
 sizeroot = np.float64(0.0)
 xlong, ylong, zlong, boxsize, boxsize2 = np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0)
+boxarr = np.array([xlong, ylong, zlong], dtype=np.float64)
 xlongs2, ylongs2, zlongs2 = np.float64(0.0), np.float64(0.0), np.float64(0.0)
 omega0,omegaL,mass_in_kg,GMphys = np.float64(0.0), np.float64(0.0), np.float64(0.0), np.float64(0.0)
 aexp_hubble_const,aexp_mega_parsec_sqrt3 = np.float64(0.0), np.float64(0.0)
@@ -377,28 +416,32 @@ fudge,alphap,epsilon,fudgepsilon = np.float64(0.0), np.float64(0.0), np.float64(
 pos_shift = np.zeros(3, dtype=np.float64)
 
 class grp:
-    __slots__ = ["nhnei", "njunk", "isad_gr", "rho_saddle_gr"]
+    __slots__ = ["nhnei", "isad_gr", "rho_saddle_gr", "tmp"]
     def __init__(self):
-        self.nhnei = None
-        self.njunk = None # To avoid missalignement in memory
-        self.isad_gr = None # integer(kind=4), dimension(:),pointer
-        self.rho_saddle_gr = None # real(kind=8), dimension(:),pointer
+        self.nhnei:np.int32 = 0
+        self.isad_gr:np.ndarray[np.int32] = None # integer(kind=4), dimension(:),pointer
+        self.rho_saddle_gr:np.ndarray[np.float64] = None # real(kind=8), dimension(:),pointer
+        self.tmp:tuple = None
 
+    def __str__(self):
+        return f"grp(nhnei={self.nhnei}, isad_gr={self.isad_gr}, rho_saddle_gr={self.rho_saddle_gr}) (tmp={self.tmp})"
 class supernode:
     __slots__ = ["level","mother","firstchild","nsisters","sister","rho_saddle","density","densmax","radius","mass","truemass","position"]
     def __init__(self):
-        self.level = None
-        self.mother = None
-        self.firstchild = None
-        self.nsisters = None
-        self.sister = None
-        self.rho_saddle = None
-        self.density = None
-        self.densmax = None
-        self.radius = None
-        self.mass = None
-        self.truemass = None
-        self.position = None
+        # Int32
+        self.mass = 0
+        self.level = 0
+        self.mother = 0
+        self.firstchild = 0
+        self.nsisters = 0
+        self.sister = 0
+        # Float64
+        self.rho_saddle = 0.0
+        self.density = 0.0
+        self.densmax = 0.0
+        self.radius = 0.0
+        self.truemass = 0.0
+        self.position = np.empty(3, dtype=np.float64)
 
 node_0:list['supernode'] = []
 group:list['grp'] = []
@@ -420,12 +463,9 @@ dump_dms = False
 #======================================================================
 # array to build the structure tree
 #======================================================================
-# integer(kind=4), allocatable :: first_daughter(:), mother(:), first_sister(:), level(:)
 nstruct = 0
 
 # used for the merger history method
-# integer(kind=4), allocatable :: npfather_0(:),ex_liste_parts(:),removesub(:)
-# integer(kind=4), allocatable :: ex_level(:),ex_nb_of_parts(:)
 ex_nb_of_structs = 0
 
 
@@ -441,3 +481,17 @@ def frange(first, last, step=1):
     else:
         return range(first, last-1, step)
 
+
+
+
+
+###################################################
+# Variables translators from Fortran to Python
+###################################################
+# I (Seyoung Jeon) changed some variable names to be more descriptive, 
+# but I will keep the original names as comments for reference. 
+# Please refer to the Fortran code for the original variable names and their usage.
+# (Hopefully, useful for search)
+
+# Fortran            | Python
+# liste_parts        | whereIam_parts
