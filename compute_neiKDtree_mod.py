@@ -1014,6 +1014,7 @@ def create_group_tree_1314():
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     print(f"{print_prefix}Create nodes ...")
     cref = time.time()
+    ### MAIN BOTTLENECK!!!
     with Pool(processes=H.nbPes) as global_pool:
         create_nodes_13143(rhot, inode, igrA, igrB, pool=global_pool)
     print(f"{print_prefix}--> {time.time()-cref:.6f} seconds to create nodes")
@@ -1180,6 +1181,7 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
     # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
     # # 0.17 sec
 
+    ### MAIN BOTTLENECK!!! (~96.66 sec)
     DEBUG = False
     if H.nbPes==1 or DEBUG or (pool is None):
         iterator = range(inc_color_tot)

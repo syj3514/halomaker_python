@@ -333,6 +333,7 @@ def new_step_1():
         total = H.nb_of_halos + H.nb_of_subhalos,
         desc = "Calc halo props"
         )
+    # Let's make below loop parallel with multiprocessing, but for now, it is serial.
     for i1 in pbar:
         if(printdatacheckhalo):
             print('> halo:', i1,'nb_of_parts_o0_1',mem['nb_of_parts_o0_1'][i1])

@@ -509,12 +509,12 @@ def write_tree_brick_1d():
     f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)
-    f44.write_record(H.nbodies); print((H.nbodies))
-    f44.write_record(H.massp); print((H.massp))
-    f44.write_record(H.aexp); print((H.aexp))
-    f44.write_record(H.omega_t); print((H.omega_t))
-    f44.write_record(H.age_univ); print((H.age_univ))
-    f44.write_record(H.nb_of_halos, H.nb_of_subhalos); print((H.nb_of_halos, H.nb_of_subhalos))
+    f44.write_record(H.nbodies)
+    f44.write_record(H.massp)
+    f44.write_record(H.aexp)
+    f44.write_record(H.omega_t)
+    f44.write_record(H.age_univ)
+    f44.write_record(H.nb_of_halos, H.nb_of_subhalos)
     for i0 in range(H.nb_of_halos + H.nb_of_subhalos):
         # write list of particles in each halo
         members = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.int32)
@@ -523,6 +523,7 @@ def write_tree_brick_1d():
             pos_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
             vel_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
             mdump = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.float64)
+        ## Change here to get rid of the linked list and directly read the particle ids
         start = mem['first_part_oo_1'][i0+1]
         for j0 in range(mem['nb_of_parts_o0_1'][i0+1]):
             members[j0] = start
@@ -535,7 +536,7 @@ def write_tree_brick_1d():
                 vel_memb[j0,1]=mem['vel_10'][start-1,1]
                 vel_memb[j0,2]=mem['vel_10'][start-1,2]
             start = mem['linked_list_oo_1'][start]
-        f44.write_record(mem['nb_of_parts_o0_1'][i0+1]); print(mem['nb_of_parts_o0_1'][i0+1])
+        f44.write_record(mem['nb_of_parts_o0_1'][i0+1])
         f44.write_record(members)
 
         if(H.dump_dms):
@@ -571,9 +572,6 @@ def write_tree_brick_1d():
 
 #***********************************************************************
 def write_halo_1d0(h:halo,unitfile:FortranFile):
-    # integer(kind=4) :: unitfile
-    # type (halo)     :: h
-
     # Masses (h.m,h.datas.mvir) are in units of 10^11 Msol, and 
     # Lengths (h.p.x,h.p.y,h.p.z,h.r,h.datas.rvir) are in units of Mpc
     # Velocities (h.v.x,h.v.y,h.v.z,h.datas.cvel) are in km/s
