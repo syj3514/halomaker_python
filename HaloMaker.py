@@ -1,4 +1,5 @@
 import sys
+import argparse
 # from halo_defs import *
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
@@ -33,9 +34,29 @@ def main():
     import halo_defs as H
     import compute_halo_props
     # get directory where to input/output the data
-    print("Usage: python HaloMaker.py [data_dir]")
-    if(len(sys.argv)<2): H.data_dir = '.'
-    else: H.data_dir = sys.argv[1]
+    print("Usage: python HaloMaker.py [output_dir]")
+    parser = argparse.ArgumentParser(description='Run HaloMaker')
+    parser.add_argument('output_dir', nargs='?', default='.', help='Directory for output data (default: current directory)')
+    # parser.add_argument('--prefix', default='', help='Prefix for output files (default: "")')
+    for attr, (aliases, dtype) in H.PARAMS.items():
+        flags = [f'--{attr}']
+
+        for alias in aliases:
+            flag = f'--{alias}'
+            if flag not in flags:
+                flags.append(flag)
+        
+        parser.add_argument(
+            *flags,
+            dest=attr,
+            type=dtype,
+            default=None,
+        )
+    H.args = parser.parse_args()
+    H.output_dir = H.args.output_dir
+    # H.prefix = args.prefix
+    # if(len(sys.argv)<2): H.output_dir = '.'
+    # else: H.output_dir = sys.argv[1]
     # initialize cosmological and technical parameters of the N_Body simulation 
     print( )
     print( '_______________________________________________________________________'  )

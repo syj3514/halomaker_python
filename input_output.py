@@ -34,7 +34,7 @@ def read_data_10():
     print(f"\n> In read_data: timestep  ---> {H.numero_step}")
 
     if(H.numero_step == 1):
-       print(f"> data_dir: `{H.data_dir}`")
+       print(f"> output_dir: `{H.output_dir}`")
        # contains the number of snapshots to analyze and their names, type and number (see below)
        f12 = open('inputfiles_HaloMaker.dat','r')
 
@@ -45,7 +45,7 @@ def read_data_10():
         name_of_file = name_of_file[1:-1]
     H.file_num = f"{int(H.numstep):05d}"
     if(name_of_file[0] != '/'):
-        name_of_file = f'{H.data_dir}/{name_of_file}'
+        name_of_file = f'{H.output_dir}/{name_of_file}'
     print(f"name_of_file: `{name_of_file}`")
 
     # Note 1: old treecode SNAP format has to be converted [using SNAP_to_SIMPLE (on T3E)] 
@@ -81,8 +81,15 @@ def read_data_10():
     
     pos = mem['pos_10']
     print(f"> min max position (in box units)   : {np.min(pos)},{np.max(pos)}")
+    if H.zoomin:
+        refmask = mem['refmask_10']
+        rpos = pos[refmask]
+        print(f">                  (zoom-in)        : {np.min(rpos)},{np.max(rpos)}")
     vel = mem['vel_10']
     print(f"> min max velocities (in km/s)      : {np.min(vel)},{np.max(vel)}")
+    if H.zoomin:
+        rvel = vel[refmask]
+        print(f">                    (zoom-in)      : {np.min(rvel)},{np.max(rvel)}")
     print(f"> Reading done.")
     print(f"> aexp = {H.aexp}")
 
@@ -306,9 +313,9 @@ def read_ramses_new_101(repository, rver='Ra3'):
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)#, H.flush)
     signal.signal(signal.SIGTERM, H.flush)
     print()
-    print(f"\t---------------------------------")
+    print(f"\t------------------------------------------------------------------")
     print(f"\t| Reading RAMSES version {rver}  ")
-    print(f"\t---------------------------------")
+    print(f"\t------------------------------------------------------------------")
     # read cosmological params in header of amr file
     ipos    = repository.find("output_")
     nchar   = repository[ipos+7:ipos+12]
@@ -404,7 +411,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
     kwargs = {'repository':repository, 'rver':rver, 'nchar':nchar, 'ndim':H.ndim, 'scale_l':scale_l, 'scale_t':scale_t, 'dmcount':True}
     iterobj = range(1,H.ncpu+1)
     if(H.nbPes==1): # Sequential reading
-        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
+        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
         ndm = 0
         for icpu1 in iterobj:
             ndm += _read_ramses_new_1010(icpu1, kwargs)
@@ -418,7 +425,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
                 r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
                 async_results.append((icpu1, r))
             ndm = 0
-            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu"):
                 try:
                     ndm += r.get(timeout=300)  # 300 sec
                 except TimeoutError:
@@ -433,7 +440,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
     kwargs['dmcount'] = False
     iterobj = range(1,H.ncpu+1)
     if(H.nbPes==1): # Sequential reading
-        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
+        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
         npart = 0
         for icpu1 in iterobj:
             npart += _read_ramses_new_1010(icpu1, kwargs)
@@ -447,7 +454,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
                 r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
                 async_results.append((icpu1, r))
             npart = 0
-            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu"):
                 try:
                     npart += r.get(timeout=300)  # 300 sec
                 except TimeoutError:
@@ -479,7 +486,25 @@ def read_ramses_new_101(repository, rver='Ra3'):
         print(f"\t> particle mass (in M_sun) after renorm  = {massres}")
     if(H.BIG_RUN):
         H.deallocate('mass_10')
-    print(f"\t---------------------------------\n", flush=True)
+
+    if (H.zoomin):
+        print(f"\t|> Applying zoom-in mask to particles...")
+        H.allocate('refmask_10', (H.npart,), dtype=np.bool_)
+        goodmask = mem['mass_10'] < 10*H.massp
+        goodpos = mem['pos_10'][goodmask]
+        xmin, xmax = np.min(goodpos[:,0]), np.max(goodpos[:,0])
+        ymin, ymax = np.min(goodpos[:,1]), np.max(goodpos[:,1])
+        zmin, zmax = np.min(goodpos[:,2]), np.max(goodpos[:,2])
+        print(f"\t|> Zoom-in box (in box units): ")
+        print(f"\t|    x=[{xmin:.3f}, {xmax:.3f}]")
+        print(f"\t|    y=[{ymin:.3f}, {ymax:.3f}]")
+        print(f"\t|    z=[{zmin:.3f}, {zmax:.3f}]")
+        H.zoombox = np.array([xmin,xmax,ymin,ymax,zmin,zmax])
+        goodmask = goodmask & (mem['pos_10'][:,0] >= xmin) & (mem['pos_10'][:,0] <= xmax) & (mem['pos_10'][:,1] >= ymin) & (mem['pos_10'][:,1] <= ymax) & (mem['pos_10'][:,2] >= zmin) & (mem['pos_10'][:,2] <= zmax)
+        mem['refmask_10'][:] = goodmask
+        print(f"\t|> Zoom-in mask applied: {np.sum(goodmask)} particles kept out of {H.npart} ({100*np.sum(goodmask)/H.npart:.2f}%)", flush=True)
+
+    print(f"\t------------------------------------------------------------------\n", flush=True)
 
 #***********************************************************************
 def write_tree_brick_1d():
@@ -500,11 +525,11 @@ def write_tree_brick_1d():
 
     if(H.BIG_RUN):
         if(H.write_resim_masses):
-            f44 = FortranFile(f'{H.data_dir}/resim_masses.dat', 'w')
+            f44 = FortranFile(f'{H.output_dir}/resim_masses.dat', 'w')
             f44.write_record(H.nbodies)
             f44.write_record(mem['mass_10'])
             f44.close()
-            full_path = os.path.abspath(f'{H.data_dir}/resim_masses.dat')
+            full_path = os.path.abspath(f'{H.output_dir}/resim_masses.dat')
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
 
@@ -517,9 +542,9 @@ def write_tree_brick_1d():
         vel_10 = mem['vel_10']
 
     if(not H.fsub):
-        filename = f"{H.data_dir}/tree_brick_{nchar}"
+        filename = f"{H.output_dir}/tree_brick_{nchar}"
     else:
-        filename = f"{H.data_dir}/tree_bricks{nchar}"
+        filename = f"{H.output_dir}/tree_bricks{nchar}"
     f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)
@@ -625,11 +650,11 @@ def write_tree_brick_hdf():
 
     if(H.BIG_RUN):
         if(H.write_resim_masses):
-            f44 = FortranFile(f'{H.data_dir}/resim_masses.dat', 'w')
+            f44 = FortranFile(f'{H.output_dir}/resim_masses.dat', 'w')
             f44.write_record(H.nbodies)
             f44.write_record(mem['mass_10'])
             f44.close()
-            full_path = os.path.abspath(f'{H.data_dir}/resim_masses.dat')
+            full_path = os.path.abspath(f'{H.output_dir}/resim_masses.dat')
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
 
@@ -642,9 +667,9 @@ def write_tree_brick_hdf():
         vel_10 = mem['vel_10']
 
     if(not H.fsub):
-        filename = f"{H.data_dir}/tree_brick_{nchar}.h5"
+        filename = f"{H.output_dir}/tree_brick_{nchar}.h5"
     else:
-        filename = f"{H.data_dir}/tree_bricks{nchar}.h5"
+        filename = f"{H.output_dir}/tree_bricks{nchar}.h5"
     # f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)

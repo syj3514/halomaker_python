@@ -295,6 +295,8 @@ profile = 'TSIS' # type of halo profile (only isothermal_sphere yet)
 ninterp = 1 # nb of bins for interp. of smoothed grav. field
 FlagPeriod = 1 # flag for periodicity of boundary conditions
 fPeriod = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+zoomin = False # flag for zoom-in simulation
+zoombox = np.array([-0.5,0.5,-0.5,0.5,-0.5,0.5])
 #----------- For gadget format: ----------------------------------------
 # nhr = 1 # to read only the selected HR particles
 # minlrmrat = 1.0 # to recognize contaminated halos
@@ -304,7 +306,7 @@ fPeriod = np.array([1.0, 1.0, 1.0], dtype=np.float64)
 #======================================================================
 # Definitions specific to input/output
 #======================================================================
-data_dir = "."
+output_dir = "."
 file_num = "00001"
 numstep = 1
 # errunit = 0
@@ -473,3 +475,64 @@ def frange(first, last, step=1):
 
 # Fortran            | Python
 # liste_parts        | whereIam_parts
+
+
+def fbool(value):
+    v = str(value).strip().lower()
+    if v in ('.true.', 'true', 't', '1', 'yes', 'y'):
+        return True
+    if v in ('.false.', 'false', 'f', '0', 'no', 'n'):
+        return False
+    raise ValueError(f"Cannot parse bool: {value}")
+
+
+def chmod(value):
+    return int(f"0o{int(value)}", 8)
+
+
+PARAMS = {
+    # name in H        aliases in input file / CLI                 type
+    'omega_f':        (['omega_0', 'Omega_0', 'omega_f'],          np.float64),
+    'omega_lambda_f': (['omega_l', 'lambda_0', 'lambda_f'],        np.float64),
+    'af':             (['af', 'afinal', 'a_f'],                    np.float64),
+    'Lf':             (['Lf', 'lf', 'lbox'],                       np.float64),
+    'H_f':            (['H_f', 'H_0', 'H'],                        np.float64),
+    'FlagPeriod':     (['FlagPeriod'],                             np.int32),
+
+    'nMembers':       (['n', 'N', 'npart'],                        np.int32),
+    'cdm':            (['cdm'],                                    fbool),
+    'method':         (['method'],                                 str),
+    'b_init':         (['b'],                                      np.float64),
+    'nvoisins':       (['nvoisins'],                               np.int32),
+    'nhop':           (['nhop'],                                   np.int32),
+    'rho_threshold':  (['rhot'],                                   np.float64),
+    'fudge':          (['fudge'],                                  np.float64),
+    'fudgepsilon':    (['fudgepsilon'],                            np.float64),
+    'alphap':         (['alphap'],                                 np.float64),
+
+    'verbose':        (['verbose'],                                fbool),
+    'megaverbose':    (['megaverbose'],                            fbool),
+    'DPMMC':          (['DPMMC'],                                  fbool),
+    'SC':             (['SC'],                                     fbool),
+    'dcell_min':      (['dcell_min'],                              np.float64),
+    'eps_SC':         (['eps_SC'],                                 np.float64),
+
+    'nsteps':         (['nsteps', 'nsteps_do'],                    np.int32),
+    'dump_dms':       (['dump_DMs'],                               fbool),
+    'dump_stars':     (['dump_stars'],                             fbool),
+    'nchem':          (['nchem'],                                  np.int32),
+
+    'dchmod':         (['dchmod'],                                 chmod),
+    'fchmod':         (['fchmod'],                                 chmod),
+    'uid':            (['uid'],                                    int),
+    'gid':            (['gid'],                                    int),
+
+    'zoomin':         (['zoomin'],                                 fbool),
+}
+
+
+ALIAS_TO_ATTR = {
+    alias: attr
+    for attr, (aliases, _) in PARAMS.items()
+    for alias in aliases
+}

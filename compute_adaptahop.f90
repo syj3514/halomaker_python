@@ -36,7 +36,7 @@ module fhalo_defs
   !======================================================================
   ! Definitions specific to input/output
   !======================================================================
-!   character(len=80)         :: data_dir
+!   character(len=80)         :: output_dir
 !   character(len=5)          :: file_num
 !   integer(kind=4)           :: numstep
   integer(kind=4),parameter :: errunit = 0
@@ -65,6 +65,7 @@ module fhalo_defs
   real(kind=8)                     :: massp
 !   real(kind=8),allocatable         :: epsvect(:)
   real(kind=8),allocatable         :: mass(:)
+  logical, allocatable             :: refmask(:)
   real(kind=8)                     :: omega_t,omega_lambda_t,omega_f,omega_lambda_f,omega_c_f
   real(kind=8)                     :: rho_crit,aexp,Lboxp,mboxp,af,ai,Lf,H_f,H_i
   real(kind=8)                     :: age_univ,Lbox_pt,Lbox_pt2,Hub_pt,omega_0,hubble,omega_lambda_0
@@ -115,6 +116,7 @@ module fhalo_defs
    integer(kind=4), allocatable :: color(:)
    ! integer(kind=4), allocatable :: partnode(:)
    real(kind=8), allocatable    :: densityg(:)
+   real(kind=8), allocatable    :: zoombox(:)
    real(kind=8)    :: sizeroot
    real(kind=8)    :: xlong, ylong, zlong, boxsize, boxsize2
    real(kind=8)    :: xlongs2, ylongs2, zlongs2
@@ -128,7 +130,7 @@ module fhalo_defs
    ! integer(kind=4) :: ncpu,nmpi,niterations
    integer(kind=4) :: ncellbuffer
    real(kind=8)    :: rho_threshold
-   logical         :: verbose,megaverbose,periodic
+   logical         :: verbose,megaverbose,periodic,zoomin
    ! real(kind=8)    :: fgas
    real(kind=8)    :: fudge,alphap,epsilon,fudgepsilon
    real(kind=8)    :: pos_shift(3),pos_renorm,velrenorm
@@ -362,18 +364,25 @@ module neiKDtree
    contains
 
 !=======================================================================
-subroutine compute_adaptahop(pos_in, mass_in)
+subroutine compute_adaptahop(pos_in, mass_in, refmask_in, zoombox_in)
 !=======================================================================
    implicit none
    real(kind=8), intent(in)         :: pos_in(:,:)
    real(kind=8), intent(in)         :: mass_in(:)
-   real(kind=8)    :: dtdtdt
+   real(kind=8), intent(in)         :: zoombox_in(:)
+   logical, intent(in)              :: refmask_in(:)
 
    allocate(liste_parts(1:nbodies))
    allocate(pos(1:npart,1:3))
    pos(:,:) = pos_in(:,:)
    allocate(mass(npart))
    mass(:) = mass_in(:)
+   if (zoomin) then
+      allocate(refmask(npart))
+      refmask(:) = refmask_in(:)
+      allocate(zoombox(1:6))
+      zoombox(:) = zoombox_in(:)
+   endif
    
    call create_tree_structure
    call compute_mean_density_and_np
@@ -426,7 +435,7 @@ subroutine sync_from_change_pos(npart_in, nbodies_in, epsilon_in, fudgepsilon_in
 end subroutine sync_from_change_pos
 
 subroutine sync_from_init_adaptahop( &
-            npart_in,nmembthresh_in,nMembers_in, &
+            npart_in,nmembthresh_in,nMembers_in, zoomin_in, &
             omegaL_in, omega_lambda_f_in,  &
             omega0_in, omega_f_in,  &
             aexp_max_in, af_in,  &
@@ -438,7 +447,7 @@ subroutine sync_from_init_adaptahop( &
             pos_shift_in)
    implicit none
 
-   integer(kind=4), intent(in) :: npart_in,nmembthresh_in,nMembers_in
+   integer(kind=4), intent(in) :: npart_in,nmembthresh_in,nMembers_in, zoomin_in
    real(kind=8), intent(in) :: omegaL_in, omega_lambda_f_in,  &
             omega0_in, omega_f_in,  &
             aexp_max_in, af_in,  &
@@ -452,6 +461,8 @@ subroutine sync_from_init_adaptahop( &
    npart = npart_in
    nmembthresh = nmembthresh_in
    nMembers = nMembers_in
+   zoomin = .false.
+   if (zoomin_in.gt.0) zoomin = .true.
    omegaL = omegaL_in
    omega_lambda_f = omega_lambda_f_in
    omega0 = omega0_in
@@ -513,53 +524,86 @@ end subroutine sync_others
 !=======================================================================
 subroutine compute_mean_density_and_np
 !=======================================================================
-  use omp_lib
-  implicit none
+   use omp_lib
+   implicit none
 
-  integer(kind=4)                     :: ipar
-  real(kind=8), dimension(0:nvoisins) :: dist2
-  integer, dimension(nvoisins)        :: iparnei
-  real(kind=8)                        :: densav
-  integer(kind=4) :: tttt0, tttt1, ttttrate
-  real(kind=8)    :: dtdtdtdt
+   integer(kind=4)                     :: ipar, icount
+   real(kind=8), dimension(0:nvoisins) :: dist2
+   integer, dimension(nvoisins)        :: iparnei
+   real(kind=8)                        :: densav
+   integer(kind=4) :: tttt0, tttt1, ttttrate
+   real(kind=8)    :: dtdtdtdt
+   integer(kind=4) :: vt0, vt1, vtrate
+   real(kind=8)    :: dvt
 
-  call system_clock(count=tttt0, count_rate=ttttrate)
-  if (verbose) write(errunit,*) '    Compute mean density for each particle...'
+   call system_clock(count=tttt0, count_rate=ttttrate)
+   if (verbose) write(errunit,*) '    Compute mean density for each particle...'
 
-  allocate(iparneigh(nhop,npart))
-  allocate(density(npart))
+   allocate(iparneigh(nhop,npart))
+   allocate(density(npart))
 
 
-  call omp_set_num_threads(nbPes)
-  if(verbose) write(errunit,*) "    [OMP] compute density with ncore=",nbPes
-  !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ipar,dist2,iparnei)
-  !$OMP DO
-  do ipar=1,npart
-     call find_nearest_parts(ipar,dist2,iparnei)
-     call compute_density(ipar,dist2,iparnei)
-     iparneigh(1:nhop,ipar)=iparnei(1:nhop)
-  enddo
-  !$OMP END DO
-  !$OMP END PARALLEL
+   call omp_set_num_threads(nbPes)
+   if(verbose) write(errunit,*) "    [OMP] compute density with ncore=",nbPes
+   if (zoomin) then
+      !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ipar,dist2,iparnei)
+      !$OMP DO
+      do ipar=1,npart
+         if (refmask(ipar)) then
+            call find_nearest_parts(ipar,dist2,iparnei)
+            call compute_density(ipar,dist2,iparnei)
+            iparneigh(1:nhop,ipar)=iparnei(1:nhop)
+         else
+            iparneigh(1:nhop,ipar)=0
+            density(ipar)=0.d0
+         endif
+      enddo
+      !$OMP END DO
+      !$OMP END PARALLEL
+   else
+      !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ipar,dist2,iparnei)
+      !$OMP DO
+      do ipar=1,npart
+         call find_nearest_parts(ipar,dist2,iparnei)
+         call compute_density(ipar,dist2,iparnei)
+         iparneigh(1:nhop,ipar)=iparnei(1:nhop)
+      enddo
+      !$OMP END DO
+      !$OMP END PARALLEL
+   endif
 
-! Check for average density
-  if (verbose) then
-     write(errunit,*) '        Calc average density...'
-     densav=0.d0
-     do ipar=1,npart
-        densav=(densav*dble(ipar-1)+dble(density(ipar)))/dble(ipar)
-     enddo
-     write(errunit,*) '    --> Average density :',densav
-  endif
-  
-  deallocate(mass_cell)
-  deallocate(size_cell)
-  deallocate(pos_cell)
-  deallocate(sister)
-  deallocate(firstchild)
-  call system_clock(count=tttt1, count_rate=ttttrate)
-  dtdtdtdt=real(tttt1-tttt0,8)/real(ttttrate,8)
-  if (verbose) write(errunit,'(A,F10.2,A)') "     --> ",dtdtdtdt," seconds to compute mean density"
+   ! Check for average density
+   if (verbose) then
+      call system_clock(count=vt0, count_rate=vtrate)
+      write(errunit,*) '        Calc average density...'
+      densav=0.d0
+      if (zoomin) then
+         icount=0
+         do ipar=1,npart
+            if (refmask(ipar)) then
+               icount = icount+1
+               densav=(densav*dble(icount-1)+dble(density(ipar)))/dble(icount)
+            endif
+         enddo
+      else
+         do ipar=1,npart
+            densav=(densav*dble(ipar-1)+dble(density(ipar)))/dble(ipar)
+         enddo
+      endif
+      write(errunit,*) '    --> Average density :',densav
+      call system_clock(count=vt1, count_rate=vtrate)
+      dvt=real(vt1-vt0,8)/real(vtrate,8)
+      if (verbose) write(errunit,'(A,F10.2,A)') "     --> ",dvt," seconds to compute average density"
+   endif
+   
+   deallocate(mass_cell)
+   deallocate(size_cell)
+   deallocate(pos_cell)
+   deallocate(sister)
+   deallocate(firstchild)
+   call system_clock(count=tttt1, count_rate=ttttrate)
+   dtdtdtdt=real(tttt1-tttt0,8)/real(ttttrate,8)
+   if (verbose) write(errunit,'(A,F10.2,A)') "     --> ",dtdtdtdt," seconds to compute mean density"
 
 end subroutine compute_mean_density_and_np
 
@@ -571,7 +615,7 @@ subroutine find_local_maxima
 
   integer(kind=4)             :: ipar,idist,iparid,iparsel,igroup,nmembmax,nmembtot
   integer(kind=4),allocatable :: nmemb(:)
-  real(kind=8)                :: denstest
+  real(kind=8)                :: densest
 
   if (verbose) write(errunit,*) '    Now Find local maxima...'
 
@@ -580,15 +624,15 @@ subroutine find_local_maxima
   idpart=0
   ngroups=0
   do ipar=1,npart
-     denstest=density(ipar)
-     if (denstest.gt.rho_threshold) then
+     densest=density(ipar)
+     if (densest.gt.rho_threshold) then
         iparsel=ipar
         do idist=1,nhop
            iparid=iparneigh(idist,ipar)
-           if (density(iparid).gt.denstest) then
+           if (density(iparid).gt.densest) then
               iparsel=iparid
-              denstest=density(iparid)
-           elseif (density(iparid).eq.denstest) then
+              densest=density(iparid)
+           elseif (density(iparid).eq.densest) then
               iparsel=min(iparsel,iparid)
               if (verbose) &
  &               write(errunit,*) '    WARNING : equal densities in find_local_maxima.'
@@ -1418,21 +1462,21 @@ subroutine find_nearest_parts(ipar,dist2,iparnei)
 !=======================================================================
 ! For ID(ipar) particle, find `nvoisins` nearest particles
 ! and store their distances in dist2 and their IDs in iparnei
-  implicit none
+   implicit none
 
-  integer(kind=4) :: ipar,idist,icell_identity,inccellpart
-  real(kind=8)    :: dist2(0:nvoisins)
-  integer(kind=4) :: iparnei(nvoisins)
-  real(kind=8)    :: poshere(1:3)
+   integer(kind=4) :: ipar,idist,icell_identity,inccellpart
+   real(kind=8)    :: dist2(0:nvoisins)
+   integer(kind=4) :: iparnei(nvoisins)
+   real(kind=8)    :: poshere(1:3)
 
-  poshere(1:3)=pos(ipar,1:3)
-  dist2(0)=0.
-  do idist=1,nvoisins
-     dist2(idist)=bignum
-  enddo
-  icell_identity =1
-  inccellpart    =0
-  call walk_tree(icell_identity,poshere,dist2,ipar,inccellpart,iparnei)
+   poshere(1:3)=pos(ipar,1:3)
+   dist2(0)=0.
+   do idist=1,nvoisins
+      dist2(idist)=bignum
+   enddo
+   icell_identity =1
+   inccellpart    =0
+   call walk_tree(icell_identity,poshere,dist2,ipar,inccellpart,iparnei)
 
 end subroutine find_nearest_parts
 
@@ -1448,84 +1492,116 @@ recursive subroutine walk_tree(icellidin,poshere,dist2,    &
 !The algorithm is an implementation of a tree structure, where cells are nodes and the particles are leaves.
 !
 ! - by ChatGPT Jan 9
-  implicit none
+   implicit none
 
 
-  integer(kind=4) :: icellidin,icell_identity,iparid,inccellpart,ic,iparcell
-  real(kind=8)    :: poshere(3),dist2(0:nvoisins)
-  real(kind=8)    :: dx,dy,dz,distance2,sc
-  integer(kind=4) :: idist,inc
-  integer(kind=4) :: icellid_out
-  real(kind=8)    :: discell2(0:8)
-  integer(kind=4) :: iparnei(nvoisins)
-  integer(kind=4) :: icid(8)
+   integer(kind=4) :: icellidin,icell_identity,iparid,inccellpart,ic,iparcell
+   real(kind=8)    :: poshere(3),dist2(0:nvoisins)
+   real(kind=8)    :: dx,dy,dz,distance2,sizec
+   real(kind=8)    :: xl,xr,yl,yr,zl,zr
+   integer(kind=4) :: idist,inc
+   integer(kind=4) :: icellid_out
+   real(kind=8)    :: discell2(0:8)
+   integer(kind=4) :: iparnei(nvoisins)
+   integer(kind=4) :: icid(8)
 
-  integer(kind=4) :: i,npart_pos_this_node
-  real(kind=8)    :: distance2p
+   integer(kind=4) :: i,npart_pos_this_node
+   real(kind=8)    :: distance2p
+   logical::ifok
 
-  icell_identity=firstchild(icellidin)
-  inc=1
-  discell2(0)=0
-  discell2(1:8)=1.d30
-  ! Until icell_identity==0: (Final leaf of tree)
-  ! Calc distance (poshere <-> cells)
-  do while (icell_identity.ne.0)
-     sc=size_cell(icell_identity)
-     dx=abs(pos_cell(1,icell_identity)-poshere(1))
-     dy=abs(pos_cell(2,icell_identity)-poshere(2))
-     dz=abs(pos_cell(3,icell_identity)-poshere(3))
-     dx=max(0.,min(dx,real(xlong,8)-dx)-sc)
-     dy=max(0.,min(dy,real(ylong,8)-dy)-sc)
-     dz=max(0.,min(dz,real(zlong,8)-dz)-sc)
-     distance2=dx**2+dy**2+dz**2
-     if (distance2.lt.dist2(nvoisins)) then
-        idist=inc-1
-        do while (discell2(idist).gt.distance2)
-           discell2(idist+1)=discell2(idist)
-           icid(idist+1)=icid(idist)
-           idist=idist-1
-        enddo
-        discell2(idist+1)=distance2
-        icid(idist+1)=icell_identity
-        inc=inc+1
-     endif
-     icell_identity=sister(icell_identity)
-  enddo
-  inccellpart=inccellpart+inc-1
-  ! Loop for counted cells,
-  ! Update the closest particle ID(in iparnei) and the distance to that part(in dist2)
-  do ic=1,inc-1
-     icellid_out=icid(ic)
-     if (firstchild(icellid_out) < 0) then ! i.e., if leaf cell
-        if (discell2(ic).lt.dist2(nvoisins)) then ! Check if cell is closer than the farthest known particle
-           npart_pos_this_node=-firstchild(icellid_out)-1
-           do i=npart_pos_this_node+1,npart_pos_this_node+mass_cell(icellid_out)
-              iparcell=idpart(i)
-              dx=abs(pos(iparcell,1)-poshere(1))
-              dx=max(0.,min(dx,real(xlong,8)-dx))
-              dy=abs(pos(iparcell,2)-poshere(2))
-              dy=max(0.,min(dy,real(ylong,8)-dy))
-              dz=abs(pos(iparcell,3)-poshere(3))
-              dz=max(0.,min(dz,real(zlong,8)-dz))
-              distance2p=dx**2+dy**2+dz**2
-              if (distance2p .lt. dist2(nvoisins)) then 
-                 if (iparcell.ne.iparid) then
-                    idist=nvoisins-1
-                    do while (dist2(idist).gt.distance2p)
-                       dist2(idist+1)=dist2(idist)
-                       iparnei(idist+1)=iparnei(idist)
-                       idist=idist-1
-                    enddo
-                    dist2(idist+1)=distance2p
-                    iparnei(idist+1)=iparcell
-                 endif
-              endif
-           enddo
-        endif              
-     elseif (discell2(ic).lt.dist2(nvoisins)) then
-        call walk_tree(icellid_out,poshere,dist2,iparid,inccellpart,iparnei)
-     endif
-  enddo
+   icell_identity=firstchild(icellidin)
+   inc=1
+   discell2(0)=0
+   discell2(1:8)=1.d30
+   ! Until icell_identity==0: (Final leaf of tree)
+   ! Calc distance (poshere <-> cells)
+   do while (icell_identity.ne.0)
+      sizec=size_cell(icell_identity)
+      if (zoomin) then
+         ifok=.true.
+         xl=pos_cell(1,icell_identity)-sizec
+         if(xl .gt. zoombox(2)) ifok=.false.
+         if (ifok) then
+            xr=pos_cell(1,icell_identity)+sizec
+            if(xr .lt. zoombox(1)) ifok=.false.
+            if (ifok) then
+               yl=pos_cell(2,icell_identity)-sizec
+               if(yl .gt. zoombox(4)) ifok=.false.
+               if (ifok) then
+                  yr=pos_cell(2,icell_identity)+sizec
+                  if(yr .lt. zoombox(3)) ifok=.false.
+                  if (ifok) then
+                     zl=pos_cell(3,icell_identity)-sizec
+                     if(zl .gt. zoombox(6)) ifok=.false.
+                     if (ifok) then
+                        zr=pos_cell(3,icell_identity)+sizec
+                        if(zr .lt. zoombox(5)) ifok=.false.
+                     endif
+                  endif
+               endif
+            endif
+         endif
+         if (.not.ifok) then
+            icell_identity=sister(icell_identity)
+            cycle
+         endif
+      endif
+      dx=abs(pos_cell(1,icell_identity)-poshere(1))
+      dy=abs(pos_cell(2,icell_identity)-poshere(2))
+      dz=abs(pos_cell(3,icell_identity)-poshere(3))
+      dx=max(0.,min(dx,real(xlong,8)-dx)-sizec)
+      dy=max(0.,min(dy,real(ylong,8)-dy)-sizec)
+      dz=max(0.,min(dz,real(zlong,8)-dz)-sizec)
+      distance2=dx**2+dy**2+dz**2
+      if (distance2.lt.dist2(nvoisins)) then
+         idist=inc-1
+         do while (discell2(idist).gt.distance2)
+            discell2(idist+1)=discell2(idist)
+            icid(idist+1)=icid(idist)
+            idist=idist-1
+         enddo
+         discell2(idist+1)=distance2
+         icid(idist+1)=icell_identity
+         inc=inc+1
+      endif
+      icell_identity=sister(icell_identity)
+   enddo
+   inccellpart=inccellpart+inc-1
+   ! Loop for counted cells,
+   ! Update the closest particle ID(in iparnei) and the distance to that part(in dist2)
+   do ic=1,inc-1
+      icellid_out=icid(ic)
+      if (firstchild(icellid_out) < 0) then ! i.e., if leaf cell
+         if (discell2(ic).lt.dist2(nvoisins)) then ! Check if cell is closer than the farthest known particle
+            npart_pos_this_node=-firstchild(icellid_out)-1
+            do i=npart_pos_this_node+1,npart_pos_this_node+mass_cell(icellid_out)
+               iparcell=idpart(i)
+               if(zoomin .and. .not. refmask(iparcell)) cycle
+               dx=abs(pos(iparcell,1)-poshere(1))
+               dx=max(0.,min(dx,real(xlong,8)-dx))
+               dy=abs(pos(iparcell,2)-poshere(2))
+               dy=max(0.,min(dy,real(ylong,8)-dy))
+               dz=abs(pos(iparcell,3)-poshere(3))
+               dz=max(0.,min(dz,real(zlong,8)-dz))
+               distance2p=dx**2+dy**2+dz**2
+               if (distance2p .lt. dist2(nvoisins)) then 
+                  if (iparcell.ne.iparid) then
+                     idist=nvoisins-1
+                     do while (dist2(idist).gt.distance2p)
+                        dist2(idist+1)=dist2(idist)
+                        iparnei(idist+1)=iparnei(idist)
+                        idist=idist-1
+                     enddo
+                     dist2(idist+1)=distance2p
+                     iparnei(idist+1)=iparcell
+                  endif
+               endif
+            enddo
+         endif              
+      elseif (discell2(ic).lt.dist2(nvoisins)) then
+         call walk_tree(icellid_out,poshere,dist2,iparid,inccellpart,iparnei)
+      endif
+   enddo
 end subroutine walk_tree
 
 !=======================================================================
@@ -1557,12 +1633,12 @@ subroutine create_tree_structure
    nlevel=0
    inccell=0
    idmother=0
-   pos_this_node(1:3)=0.
+   pos_this_node(1:3)=0.d0
    npart_this_node=npart
    npart_pos_this_node=0
    idpart_tmp(1:npart)=0
-   pos_cell(1:3,1:ncellmx)=0.
-   size_cell(1:ncellmx)=0.
+   pos_cell(1:3,1:ncellmx)=0.d0
+   size_cell(1:ncellmx)=0.d0
    mass_cell(1:ncellmx)=0
    sister(1:ncellmx)=0
    firstchild(1:ncellmx)=0
@@ -1624,7 +1700,7 @@ recursive subroutine create_KDtree(nlevel,pos_this_node,npart_this_node, &
 
    integer(kind=4)           :: nlevel,npart_pos_this_node,npart_this_node
    real(kind=8)              :: pos_ref(3,0:7)
-   real(kind=8)              :: pos_this_node(3)   
+   real(kind=8)              :: pos_this_node(3)
    integer(kind=4)           :: ipar,icid,j,inccell,nlevel_out
    integer(kind=4), external :: icellid
    integer(kind=4)           :: npart_pos_this_node_out,npart_this_node_out

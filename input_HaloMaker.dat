@@ -25,4 +25,5 @@ eps_SC         = 0.3      ! Reduction fraction of the concentric shpere radius (
 dchmod         = 775      ! chmod for directories/scripts (Default: 755)
 fchmod         = 664      ! chmod for regular files (Default: 644)
 uid            = -1       ! change uid unless -1
-gid            = 20005       ! change gid unless -1
+gid            = 20005    ! change gid unless -1
+zoomin         = .true.   ! this will overwrite `FlagPeriod` as 0

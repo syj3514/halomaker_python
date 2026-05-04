@@ -90,83 +90,150 @@ def init_cosmo_01():
     print('\n> Values of input parameters:  ')
     print('> ---------------------------- ')
     print("")
-    print(f'> Looking for `input_HaloMaker.dat` in directory: `{H.data_dir}`')
-    f20 = open(f'input_HaloMaker.dat', 'r')
+    print(f'> Looking for `input_HaloMaker.dat` in directory: `{H.output_dir}`')
+    # f20 = open(f'input_HaloMaker.dat', 'r')
+    # for line in f20:
+    #     i = line.find('=')
+    #     if (i == -1 or line[0] == '#'): continue
+    #     name  = line[:i].strip()
+    #     value = line[i+1:].strip()
+    #     # check for a comment at end of line
+    #     i     = value.find('!')
+    #     if (i != -1): value = value[:i].strip()
+    #     print(f'>{name:>15} : {str(value):>10}')
+    #     if (name == 'omega_0' or name == 'Omega_0' or name == 'omega_f'):
+    #         H.omega_f = np.float64(value)
+    #     elif (name == 'omega_l' or name == 'lambda_0' or name == 'lambda_f'):
+    #         H.omega_lambda_f = np.float64(value)
+    #     elif (name == 'af' or name == 'afinal' or name == 'a_f'):
+    #         H.af = np.float64(value)
+    #     elif (name == 'Lf' or name == 'lf' or name == 'lbox'):
+    #         H.Lf = np.float64(value)
+    #     elif (name == 'H_f' or name == 'H_0' or name == 'H'):
+    #         H.H_f = np.float64(value)
+    #     elif (name == 'FlagPeriod'):
+    #         H.FlagPeriod = np.int32(value)
+    #     elif (name == 'n' or name == 'N' or name == 'npart'):
+    #         H.nMembers = np.int32(value)
+    #     elif (name == 'cdm'):
+    #         H.cdm = value=='.true.'
+    #     elif (name == 'method'):
+    #         H.method = value
+    #     elif (name == 'b'):
+    #         H.b_init = np.float64(value)
+    #     elif (name == 'nvoisins'):
+    #         H.nvoisins = np.int32(value)
+    #     elif (name == 'nhop'):
+    #         H.nhop = np.int32(value)
+    #     elif (name == 'rhot'):
+    #         H.rho_threshold = np.float64(value)
+    #     elif (name == 'fudge'):
+    #         H.fudge = np.float64(value)
+    #     elif (name == 'fudgepsilon'):
+    #         H.fudgepsilon = np.float64(value)
+    #     elif (name == 'alphap'):
+    #         H.alphap = np.float64(value)
+    #     elif (name == 'verbose'):
+    #         H.verbose = value=='.true.'
+    #     elif (name == 'megaverbose'):
+    #         H.megaverbose = value=='.true.'
+    #     elif (name == 'DPMMC'):
+    #         H.DPMMC = value=='.true.'
+    #     elif (name == 'SC'):
+    #         H.SC = value=='.true.'
+    #     elif (name == 'dcell_min'):
+    #         H.dcell_min = np.float64(value)
+    #     elif (name == 'eps_SC'):
+    #         H.eps_SC = np.float64(value)
+    #     elif (name == 'nsteps' or name == 'nsteps_do'):
+    #         H.nsteps = np.int32(value)
+    #     elif (name == 'dump_DMs'):
+    #         H.dump_dms = value=='.true.'
+    #     elif (name == 'dump_stars'):
+    #         H.dump_stars = value=='.true.'
+    #     elif (name == 'nchem'):
+    #         H.nchem = np.int32(value)
+    #     elif (name == 'agor_file'):
+    #         if(H.ANG_MOM_OF_R): H.agor_file = f"{H.output_dir}/{value}"
+    #     elif (name == 'dchmod'):
+    #         H.dchmod = int(f"0o{int(value)}", 8)
+    #     elif (name == 'fchmod'):
+    #         H.fchmod = int(f"0o{int(value)}", 8)
+    #     elif (name == 'uid'):
+    #         H.uid = int(value)
+    #     elif (name == 'gid'):
+    #         H.gid = int(value)
+    #     elif (name == 'zoomin'):
+    #         H.zoomin = value=='.true.'
+    #     else:
+    #         print(f'dont recognise parameter: {name}')
+    # f20.close()
+
+    # if (H.zoomin):
+    #     H.FlagPeriod = 0
+
+    # ==========================================================
+    # ==========================================================
+    # ==========================================================
+    f20 = open('input_HaloMaker.dat', 'r')
+
     for line in f20:
         i = line.find('=')
-        if (i == -1 or line[0] == '#'): continue
+        if i == -1 or line.strip().startswith('#'):
+            continue
+
         name  = line[:i].strip()
         value = line[i+1:].strip()
+
         # check for a comment at end of line
-        i     = value.find('!')
-        if (i != -1): value = value[:i].strip()
+        i = value.find('!')
+        if i != -1:
+            value = value[:i].strip()
+
         print(f'>{name:>15} : {str(value):>10}')
-        if (name == 'omega_0' or name == 'Omega_0' or name == 'omega_f'):
-            H.omega_f = np.float64(value)
-        elif (name == 'omega_l' or name == 'lambda_0' or name == 'lambda_f'):
-            H.omega_lambda_f = np.float64(value)
-        elif (name == 'af' or name == 'afinal' or name == 'a_f'):
-            H.af = np.float64(value)
-        elif (name == 'Lf' or name == 'lf' or name == 'lbox'):
-            H.Lf = np.float64(value)
-        elif (name == 'H_f' or name == 'H_0' or name == 'H'):
-            H.H_f = np.float64(value)
-        elif (name == 'FlagPeriod'):
-            H.FlagPeriod = np.int32(value)
-        elif (name == 'n' or name == 'N' or name == 'npart'):
-            H.nMembers = np.int32(value)
-        elif (name == 'cdm'):
-            H.cdm = value=='.true.'
-        elif (name == 'method'):
-            H.method = value
-        elif (name == 'b'):
-            H.b_init = np.float64(value)
-        elif (name == 'nvoisins'):
-            H.nvoisins = np.int32(value)
-        elif (name == 'nhop'):
-            H.nhop = np.int32(value)
-        elif (name == 'rhot'):
-            H.rho_threshold = np.float64(value)
-        elif (name == 'fudge'):
-            H.fudge = np.float64(value)
-        elif (name == 'fudgepsilon'):
-            H.fudgepsilon = np.float64(value)
-        elif (name == 'alphap'):
-            H.alphap = np.float64(value)
-        elif (name == 'verbose'):
-            H.verbose = value=='.true.'
-        elif (name == 'megaverbose'):
-            H.megaverbose = value=='.true.'
-        elif (name == 'DPMMC'):
-            H.DPMMC = value=='.true.'
-        elif (name == 'SC'):
-            H.SC = value=='.true.'
-        elif (name == 'dcell_min'):
-            H.dcell_min = np.float64(value)
-        elif (name == 'eps_SC'):
-            H.eps_SC = np.float64(value)
-        elif (name == 'nsteps' or name == 'nsteps_do'):
-            H.nsteps = np.int32(value)
-        elif (name == 'dump_DMs'):
-            H.dump_dms = value=='.true.'
-        elif (name == 'dump_stars'):
-            H.dump_stars = value=='.true.'
-        elif (name == 'nchem'):
-            H.nchem = np.int32(value)
-        elif (name == 'agor_file'):
-            if(H.ANG_MOM_OF_R): H.agor_file = f"{H.data_dir}/{value}"
-        elif (name == 'dchmod'):
-            H.dchmod = int(f"0o{int(value)}", 8)
-        elif (name == 'fchmod'):
-            H.fchmod = int(f"0o{int(value)}", 8)
-        elif (name == 'uid'):
-            H.uid = int(value)
-        elif (name == 'gid'):
-            H.gid = int(value)
+
+        if name == 'agor_file':
+            if H.ANG_MOM_OF_R:
+                H.agor_file = f"{H.output_dir}/{value}"
+
+        elif name in H.ALIAS_TO_ATTR:
+            attr = H.ALIAS_TO_ATTR[name]
+            dtype = H.PARAMS[attr][1]
+            setattr(H, attr, dtype(value))
+
         else:
             print(f'dont recognise parameter: {name}')
+
     f20.close()
-    
+
+
+    # command-line override
+    for attr, value in vars(H.args).items():
+        if value is None:
+            continue
+
+        if attr == 'output_dir':
+            continue
+
+        if attr == 'agor_file':
+            if H.ANG_MOM_OF_R:
+                H.agor_file = f"{H.output_dir}/{value}"
+                print(f'[override] H.agor_file = {H.agor_file}')
+            continue
+
+        if attr in H.PARAMS:
+            setattr(H, attr, value)
+            print(f'[override] H.{attr} = {value}')
+
+
+    # dependent rule
+    if getattr(H, 'zoomin', False):
+        H.FlagPeriod = np.int32(0)
+        print('[postprocess] H.zoomin=True -> H.FlagPeriod=0')
+    # ==========================================================
+    # ==========================================================
+    # ==========================================================
+
     # initial size of the box in physical Mpc (NB: f index stands for final quantities)
     H.Lboxp = H.Lf*(H.ai/H.af)
 
@@ -249,6 +316,7 @@ def new_step_1():
         if(H.allocated('vel_10')): H.deallocate('vel_10')
         if(H.allocated('mass_10')): H.deallocate('mass_10')
         if(H.allocated('whereIam_parts')): H.deallocate('whereIam_parts')
+        if(H.allocated('refmask_10')): H.deallocate('refmask_10')
         if(len(H.liste_halos_o0)>0): H.liste_halos_o0 = np.empty(0, dtype=H.halo_dtype)
         return
     print(f"\n$$ Read data done ({time.time()-_ref:.2f} sec)", flush=True)
@@ -450,6 +518,7 @@ def new_step_1():
     H.deallocate('liste_halos_o0')
     # H.deallocate('nb_of_parts_o0_1','first_part_oo_1','linked_list_oo_1')
     H.deallocate('pos_10','vel_10')
+    if H.allocated('refmask_10'): H.deallocate('refmask_10')
     H.deallocate('whereIam_idxs','whereIam_counts','pids0_groupsorted')
     if(H.allocated('mass_10')): H.deallocate('mass_10')
     if(not H.cdm): H.deallocate('density_1312')
@@ -476,7 +545,10 @@ def make_halos_13():
 
     print('> In routine make_halos ')
     print('> ----------------------')
-    print(f"> npart={H.npart}")
+    if H.zoomin:
+        print(f"> npart={H.npart} (in zoom, {np.sum(mem['refmask_10'])})")
+    else:
+        print(f"> npart={H.npart}")
     
     print( )
     print( '_______________________________________________________________________'  )
