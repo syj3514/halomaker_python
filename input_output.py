@@ -525,11 +525,11 @@ def write_tree_brick_1d():
 
     if(H.BIG_RUN):
         if(H.write_resim_masses):
-            f44 = FortranFile(f'{H.output_dir}/resim_masses.dat', 'w')
+            f44 = FortranFile(f'{H.output_dir}/resim_masses{H.prefix}.dat', 'w')
             f44.write_record(H.nbodies)
             f44.write_record(mem['mass_10'])
             f44.close()
-            full_path = os.path.abspath(f'{H.output_dir}/resim_masses.dat')
+            full_path = os.path.abspath(f'{H.output_dir}/resim_masses{H.prefix}.dat')
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
 
@@ -542,9 +542,9 @@ def write_tree_brick_1d():
         vel_10 = mem['vel_10']
 
     if(not H.fsub):
-        filename = f"{H.output_dir}/tree_brick_{nchar}"
+        filename = f"{H.output_dir}/tree_brick_{nchar}{H.prefix}"
     else:
-        filename = f"{H.output_dir}/tree_bricks{nchar}"
+        filename = f"{H.output_dir}/tree_bricks{nchar}{H.prefix}"
     f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)
@@ -650,11 +650,11 @@ def write_tree_brick_hdf():
 
     if(H.BIG_RUN):
         if(H.write_resim_masses):
-            f44 = FortranFile(f'{H.output_dir}/resim_masses.dat', 'w')
+            f44 = FortranFile(f'{H.output_dir}/resim_masses{H.prefix}.dat', 'w')
             f44.write_record(H.nbodies)
             f44.write_record(mem['mass_10'])
             f44.close()
-            full_path = os.path.abspath(f'{H.output_dir}/resim_masses.dat')
+            full_path = os.path.abspath(f'{H.output_dir}/resim_masses{H.prefix}.dat')
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
 
@@ -667,9 +667,9 @@ def write_tree_brick_hdf():
         vel_10 = mem['vel_10']
 
     if(not H.fsub):
-        filename = f"{H.output_dir}/tree_brick_{nchar}.h5"
+        filename = f"{H.output_dir}/tree_brick_{nchar}{H.prefix}.h5"
     else:
-        filename = f"{H.output_dir}/tree_bricks{nchar}.h5"
+        filename = f"{H.output_dir}/tree_bricks{nchar}{H.prefix}.h5"
     # f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)

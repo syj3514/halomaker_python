@@ -9,10 +9,6 @@ from itertools import combinations
 #//////////////////////////////////////////////////////////////////////////
 #**************************************************************************
 def init_0():
-    H.write_resim_masses = True
-    H.mprefix[1] = f"u{os.getuid()}"
-    H.mprefix[2] = time.strftime("t%Y%m%d_%H%M%S", time.localtime())
-
     # initialize gravitationalsoftening 
     initgsoft_00()
 
@@ -220,8 +216,12 @@ def init_cosmo_01():
                 H.agor_file = f"{H.output_dir}/{value}"
                 print(f'[override] H.agor_file = {H.agor_file}')
             continue
-
-        if attr in H.PARAMS:
+        elif attr == 'prefix':
+            H.prefix = H.args.prefix
+            if H.prefix[0] != "_":
+                H.prefix = f"_{H.prefix}"
+            print(f'[override] H.{attr} = {H.prefix}')
+        elif attr in H.PARAMS:
             setattr(H, attr, value)
             print(f'[override] H.{attr} = {value}')
 
@@ -261,6 +261,12 @@ def init_cosmo_01():
     print( f' > Hubble parameter  (km/s/Mpc)     :   ',H.H_i)
     print( f' > box mass (10^11 Msol)            :   ',H.mboxp)
     print()
+
+    H.write_resim_masses = True
+    H.mprefix[1] = f"u{os.getuid()}"
+    H.mprefix[2] = time.strftime("t%Y%m%d_%H%M%S", time.localtime())
+    if H.prefix != "":
+        H.mprefix[2] = f"{H.mprefix[2]}{H.prefix}"
 
 
 def _compute_halo_props(ih1, member, fagor, printdatacheckhalo):
@@ -413,10 +419,10 @@ def new_step_1():
             else:
                 n_halo_contam += 1
     print('> # of halos, # of CONTAMINATED halos :',H.nb_of_halos,n_halo_contam,H.nb_of_subhalos,n_subs_contam)
-    f222 = open('ncontam_halos.dat', 'a+')
+    f222 = open(f'ncontam_halos{H.prefix}.dat', 'a+')
     f222.write(f'{H.numero_step:6d} {H.nb_of_halos:6d} {n_halo_contam:6d} {H.nb_of_subhalos:6d} {n_subs_contam:6d}\n')
     f222.close()
-    full_path = os.path.abspath('ncontam_halos.dat')
+    full_path = os.path.abspath(f'ncontam_halos{H.prefix}.dat')
     os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
     print(f"\n$$ Make linked list done ({time.time()-_ref:.2f} sec)", flush=True)

@@ -315,6 +315,7 @@ dchmod = 0o755
 fchmod = 0o644
 uid = -1
 gid = -1
+prefix=""
 
 #======================================================================
 
@@ -528,6 +529,7 @@ PARAMS = {
     'gid':            (['gid'],                                    int),
 
     'zoomin':         (['zoomin'],                                 fbool),
+    'prefix':         (['prefix'],                                 str),
 }
 
 

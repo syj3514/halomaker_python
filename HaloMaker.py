@@ -53,8 +53,8 @@ def main():
             default=None,
         )
     H.args = parser.parse_args()
+    print(H.args)
     H.output_dir = H.args.output_dir
-    # H.prefix = args.prefix
     # if(len(sys.argv)<2): H.output_dir = '.'
     # else: H.output_dir = sys.argv[1]
     # initialize cosmological and technical parameters of the N_Body simulation 
