@@ -19,6 +19,7 @@ DEV = False
 ANG_MOM_OF_R = False
 Test_FOF = False
 SCIPY = True
+FORTRAN = True
 
 #======================================================================
 # Memory allocation
@@ -30,7 +31,7 @@ def collapse_mprefix():
 mem = {}
 mem_address = {}
 globvars = {}
-massalloc=False
+massalloc=True
 
 pos_ref_0 = np.array([
     -1., -1., -1.,
@@ -47,6 +48,7 @@ def maccess(name):
     global mem_address
     temp, shape, dtype = mem_address[name]
     return np.ndarray(shape, dtype=dtype, buffer=temp.buf)
+
 
 def mlist():
     global mem_address
@@ -94,7 +96,7 @@ def mlist():
     print("-" * len(header))
 
 
-def allocate(name, shape, dtype=np.float64):
+def allocate(name, shape, dtype:type|np.dtype=np.float64):
     global mem, mem_address
     if(DEV): print(f"\t@Allocating memory `{name}` | {shape}")
     arr = np.empty(shape, dtype=dtype)
@@ -124,6 +126,8 @@ def deallocate(*names):
                 mem_address[name][0] = None
             del mem[name]
             del mem_address[name]
+        else:
+            print(f"\t@Memory address `{name}` does not exist")
     if(list(mem.keys())==0):
         signal.signal(signal.SIGINT, signal.SIG_DFL)
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
@@ -192,125 +196,88 @@ def datload(path, dtype='f8', msg=False):
 class vector:
     __slots__ = ["x", "y", "z"]
     def __init__(self):
-        self.x = None
-        self.y = None
-        self.z = None
+        self.x:float = 0
+        self.y:float = 0
+        self.z:float = 0
 
 class shape:
     __slots__ = ["a", "b", "c"]
     def __init__(self):
-        self.a = None
-        self.b = None
-        self.c = None
+        self.a:float = 0
+        self.b:float = 0
+        self.c:float = 0
 
 class baryon:
     __slots__ = ["rvir", "mvir", "tvir", "cvel"]
     def __init__(self):
-        self.rvir = None
-        self.mvir = None
-        self.tvir = None
-        self.cvel = None
+        self.rvir:float = 0
+        self.mvir:float = 0
+        self.tvir:float = 0
+        self.cvel:float = 0
 
 class extend:
     __slots__ = ['mcontam']
     def __init__(self):
-        self.mcontam = None
+        self.mcontam:float = 0
 
 class hprofile:
     __slots__ = ["rho_0", "r_c", "cNFW"]
     def __init__(self):
-        self.rho_0 = None
-        self.r_c = None
-        self.cNFW = None
+        self.rho_0:float = 0
+        self.r_c:float = 0
+        self.cNFW:float = 0
 
-liste_halos_o0:list['halo'] = []
-class halo:
-    __slots__ = ["datas", "sh", "p", "v", "L", "E", "halo_profile", "my_number", "my_timestep", "nbsub", "hosthalo", "hostsub", "level", "nextsub", "m", "r", "spin", "sigma", "ek", "ep", "et"]
-    def __init__(self):
-        self.datas = baryon()
-        self.sh = shape()
-        self.p = vector()
-        self.v = vector()
-        self.L = vector()
-        self.E = extend()
-        self.halo_profile = hprofile()
-        self.my_number = None
-        self.my_timestep = None
-        self.nbsub = None
-        self.hosthalo = None
-        self.hostsub = None
-        self.level = None
-        self.nextsub = None
-        self.m = None
-        self.r = None
-        self.spin = None
-        self.sigma = None
-        self.ek = None
-        self.ep = None
-        self.et = None
+
+
+halo_dtype = np.dtype([
+        ('id', 'i4'),
+        ('timestep', 'i4'),
+        ('nmem', 'i4'),('ndm', 'i4'),('nstar', 'i4'),
+        ('nbsub', 'i4'),
+        ('hosthalo', 'i4'),
+        ('hostsub', 'i4'),
+        ('level', 'i4'),
+        ('nextsub', 'i4'),
+        ('px', 'f8'),('py', 'f8'),('pz', 'f8'),
+        ('vx', 'f8'),('vy', 'f8'),('vz', 'f8'),
+        ('Lx', 'f8'),('Ly', 'f8'),('Lz', 'f8'),
+        ('Lx*', 'f8'),('Ly*', 'f8'),('Lz*', 'f8'),
+        ('sha', 'f8'),('shb', 'f8'),('shc', 'f8'),
+        ('m', 'f8'),('mdm', 'f8'),('m*', 'f8'),
+        ('r', 'f8'),
+        ('spin', 'f8'),
+        ('sigma', 'f8'),('sigma_dm', 'f8'),('sigma*', 'f8'),
+        ('ek', 'f8'),('ep', 'f8'),('et', 'f8'),
+        ('rvir','f8'),('mvir','f8'),('tvir','f8'),('cvel','f8'),
+        ('rho_0','f8'),('r_c','f8'),('cNFW','f8'),
+        ('mcontam','f8')
+])
+
+def clear_halo(h):
+    h['id']=0
+    h['timestep'] = 0
+    h['nmem'] = 0; h['ndm'] = 0; h['nstar'] = 0
+    h['nbsub'] = 0
+    h['hosthalo'] = 0
+    h['hostsub'] = 0
+    h['level'] = 1
+    h['nextsub'] = -1
+    h['px'] = np.float64(0.0); h['py'] = np.float64(0.0); h['pz'] = np.float64(0.0)  
+    h['vx'] = np.float64(0.0); h['vy'] = np.float64(0.0); h['vz'] = np.float64(0.0)
+    h['Lx'] = np.float64(0.0); h['Ly'] = np.float64(0.0); h['Lz'] = np.float64(0.0)
+    h['Lx*'] = np.float64(0.0); h['Ly*'] = np.float64(0.0); h['Lz*'] = np.float64(0.0)
+    h['sha'] = np.float64(0.0);h['shb'] = np.float64(0.0);h['shc'] = np.float64(0.0)
+    h['m'] = np.float64(0.0); h['mdm'] = np.float64(0.0); h['m*'] = np.float64(0.0)
+    h['r'] = np.float64(0.0)
+    h['spin'] = np.float64(0.0)
+    h['sigma'] = np.float64(0.0); h['sigma_dm'] = np.float64(0.0); h['sigma*'] = np.float64(0.0)
+    h['ek'] = np.float64(0.0); h['ep'] = np.float64(0.0); h['et'] = np.float64(0.0)
+    h['rvir'] = np.float64(0.0); h['mvir'] = np.float64(0.0); h['tvir'] = np.float64(0.0); h['cvel'] = np.float64(0.0)
+    h['rho_0'] = np.float64(0.0); h['r_c'] = np.float64(0.0); h['cNFW'] = np.float64(0.0)
+    h['mcontam'] = np.float64(0.0)
     
-    def clear_halo(self):
-        self.my_number = 0
-        self.my_timestep = 0
-        self.nbsub = 0
-        self.hosthalo = 0
-        self.hostsub = 0
-        self.level = 1
-        self.nextsub = -1
-        self.m = np.float64(0.0)
-        self.p.x = np.float64(0.0)
-        self.p.y = np.float64(0.0)    
-        self.p.z = np.float64(0.0)  
-        self.v.x = np.float64(0.0)
-        self.v.y = np.float64(0.0)
-        self.v.z = np.float64(0.0)
-        self.L.x = np.float64(0.0)
-        self.L.y = np.float64(0.0)
-        self.L.z = np.float64(0.0)
-        self.spin = np.float64(0.0)
-        self.r = np.float64(0.0)
-        self.sh.a = np.float64(0.0)
-        self.sh.b = np.float64(0.0)
-        self.sh.c = np.float64(0.0)
-        self.ek = np.float64(0.0)
-        self.ep = np.float64(0.0)
-        self.et = np.float64(0.0)
-        self.datas.rvir = np.float64(0.0)
-        self.datas.mvir = np.float64(0.0)  
-        self.datas.tvir = np.float64(0.0)
-        self.datas.cvel = np.float64(0.0)
-        self.halo_profile.rho_0 = np.float64(0.0)
-        self.halo_profile.r_c = np.float64(0.0)
-        self.halo_profile.cNFW = np.float64(0.0)
-        self.E.mcontam = np.float64(0.0)
-    
-    def write_halo(self, fname):
-        '''
-        Masses (h%m,h%datas%mvir) are in units of 10^11 Msol, and 
-        Lengths (h%p%x,h%p%y,h%p%z,h%r,h%datas%rvir) are in units of Mpc
-        Velocities (h%v%x,h%v%y,h%v%z,h%datas%cvel) are in km/s
-        Energies (h%ek,h%ep,h%et) are in
-        Temperatures (h%datas%tvir) are in K
-        Angular Momentum (h%L%x,h%L%y,h%L%z) are in
-        Other quantities are dimensionless (h%my_number,h%my_timestep,h%spin)  
-        '''
-        with FortranFile(fname, 'w') as f:
-            f.write_record(self.my_number)
-            f.write_record(self.my_timestep)
-            f.write_record(self.level,self.hosthalo,self.hostsub,self.nbsub,self.nextsub)
-            f.write_record(self.m)
-            f.write_record(self.p.x,self.p.y,self.p.z)
-            f.write_record(self.v.x,self.v.y,self.v.z)
-            f.write_record(self.L.x,self.L.y,self.L.z )
-            f.write_record(self.r, self.sh.a, self.sh.b, self.sh.c)
-            f.write_record(self.ek,self.ep,self.et)
-            f.write_record(self.spin)
-            f.write_record(self.sigma)
-            f.write_record(self.datas.rvir,self.datas.mvir,self.datas.tvir,self.datas.cvel)
-            f.write_record(self.halo_profile.rho_0,self.halo_profile.r_c,self.halo_profile.cNFW)
-            f.write_record(self.E.mcontam)
-        full_path = os.path.abspath(fname)
-        os.chmod(full_path, fchmod); os.chown(full_path, uid, gid)
+
+liste_halos_o0 = np.empty(0, dtype=halo_dtype)
 #======================================================================
 
 
@@ -404,6 +371,8 @@ omega0,omegaL,mass_in_kg,GMphys = np.float64(0.0), np.float64(0.0), np.float64(0
 aexp_hubble_const,aexp_mega_parsec_sqrt3 = np.float64(0.0), np.float64(0.0)
 aexp_mega_parsec,aexp_max = np.float64(0.0), np.float64(0.0)
 npart = 0
+nstar = 0
+ndm = 0
 nvoisins,nhop,ntype = 0, 0, 0
 ncellmx = 0
 ngroups,nmembthresh,nnodes,nnodesmax = 0, 0, 0, 0
@@ -425,25 +394,32 @@ class grp:
 
     def __str__(self):
         return f"grp(nhnei={self.nhnei}, isad_gr={self.isad_gr}, rho_saddle_gr={self.rho_saddle_gr}) (tmp={self.tmp})"
-class supernode:
-    __slots__ = ["level","mother","firstchild","nsisters","sister","rho_saddle","density","densmax","radius","mass","truemass","position"]
-    def __init__(self):
-        # Int32
-        self.mass = 0
-        self.level = 0
-        self.mother = 0
-        self.firstchild = 0
-        self.nsisters = 0
-        self.sister = 0
-        # Float64
-        self.rho_saddle = 0.0
-        self.density = 0.0
-        self.densmax = 0.0
-        self.radius = 0.0
-        self.truemass = 0.0
-        self.position = np.empty(3, dtype=np.float64)
+# class supernode:
+#     __slots__ = ["level","mother","firstchild","nsisters","sister","rho_saddle","density","densmax","radius","mass","truemass","position"]
+#     def __init__(self):
+#         # Int32
+#         self.mass = 0
+#         self.level = 0
+#         self.mother = 0
+#         self.firstchild = 0
+#         self.nsisters = 0
+#         self.sister = 0
+#         # Float64
+#         self.rho_saddle = 0.0
+#         self.density = 0.0
+#         self.densmax = 0.0
+#         self.radius = 0.0
+#         self.truemass = 0.0
+#         self.position = np.empty(3, dtype=np.float64)
 
-node_0:list['supernode'] = []
+# node_0:list['supernode'] = []
+node_dtype = np.dtype([
+                    ('rho_saddle','f8'), ('density','f8'), ('densmax','f8'), ('radius','f8'),
+                    ('truemass','f8'), ('px','f8'), ('py','f8'), ('pz','f8'),
+                    ('mass','i4'), ('level','i4'), ('mother','i4'), ('firstchild','i4'),
+                    ('nsisters','i4'), ('sister','i4')
+                    ])
+node_0:np.ndarray = np.empty(0, dtype=node_dtype)
 group:list['grp'] = []
 #    type (grp), allocatable       :: group(:)
 #    type (supernode), allocatable :: node_0(:)
@@ -459,6 +435,8 @@ SC = False # flag to select the com within concentric spheres (not with FOF)
 dcell_min = np.float64(0.0)
 eps_SC = np.float64(0.0)
 dump_dms = False
+dump_stars = False
+nchem=0
 
 #======================================================================
 # array to build the structure tree

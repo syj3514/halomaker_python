@@ -1,4 +1,4 @@
-af             =  1.000   ! Today expansion factor == 1+zi
+af             =  1.000   ! Today expansion factor == 1/(1+zi)
 lbox           =  142.04546 ! Size of the box at z=0 (NB: in Mpc! ==> 479 Mpc/h=684.286 Mpc)
 H_f            =  70.400  ! Hubble constant (in Km/s/Mpc) at z=0
 omega_f        =   0.272  ! Omega matter at z=0 (ex: 0.3)
@@ -14,7 +14,7 @@ fudge          = 4.       ! parameter for adaptahop (usually 4.)
 fudgepsilon    = 0.001    ! parameter for adaptahop (usually 0.05)
 alphap         = 1.0      ! parameter for adaptahop (usually 1.)
 verbose        = .true.  ! verbose parameter for both halo finder
-megaverbose    = .true.  ! parameter for adaptahop
+megaverbose    = .false.  ! parameter for adaptahop
 nsteps         =  200      ! Number of time steps to analyse
 FlagPeriod     =  1       ! Periodic boundaries (1:True)
 dump_DMs       = .false.

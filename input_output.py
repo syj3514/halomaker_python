@@ -1,10 +1,13 @@
-from halo_defs import mem, halo, frange
+from halo_defs import mem, frange
 import halo_defs as H
 import numpy as np
 import atexit, signal, sys
 from scipy.io import FortranFile
 from tqdm import tqdm
-from multiprocessing import Pool
+# from multiprocessing import Pool
+import multiprocessing as mp
+ctx = mp.get_context('fork')
+Pool = ctx.Pool
 
 import faulthandler, signal, sys
 faulthandler.enable()
@@ -100,23 +103,6 @@ def skip_records(f, skip_num=1):
 #***********************************************************************
 def read_ramses_100(repository):
     ''' This routine reads DM particles dumped in the RAMSES format.
-    implicit none
-
-    character(len=*)            :: repository
-    integer(kind=4)             :: ndim,npart,idim,icpu,ipos,H.ncpu,i,ipar
-    integer(kind=4)             :: ncpu2,npart2,ndim2
-    integer(kind=4)             :: nx,ny,nz,nlevelmax,ngridmax,nstep_coarse
-    integer(kind=4),allocatable :: idp(:)
-    real(kind=8)                :: boxlen,tco,aexp_ram,hexp
-    real(kind=8)                :: omega_m,omega_l,omega_k,omega_b
-    real(kind=8)                :: scale_l,scale_d,scale_t
-    real(kind=8)                :: mtot,massres
-    real(kind=8),allocatable    :: tmpp(:,:),tmpv(:,:),tmpm(:)
-    character*200               :: nomfich
-    character*5                 :: nchar,ncharcpu
-    logical                     :: ok
-
-    
     # NB: repository is directory containing output files
     # e.g. /horizon1/teyssier/ramses_simu/boxlen100_n256/output_00001/
     '''
@@ -227,7 +213,6 @@ def read_ramses_100(repository):
         if(H.BIG_RUN):
             H.deallocate('mass_10')
 #***********************************************************************
-# def _read_ramses_new_1010(icpu, cursors, nsize, kwargs):
 def _read_ramses_new_1010(icpu, kwargs):
     repository = kwargs['repository']
     rver = kwargs['rver']
@@ -235,6 +220,7 @@ def _read_ramses_new_1010(icpu, kwargs):
     H.ndim = kwargs['ndim']
     scale_l = kwargs['scale_l']
     scale_t = kwargs['scale_t']
+    dmcount = kwargs['dmcount']
 
     nomfich = f"{repository}/part_{nchar}.out{icpu:05d}"
     with FortranFile(nomfich, 'r') as f:
@@ -247,19 +233,23 @@ def _read_ramses_new_1010(icpu, kwargs):
         nsink, = f.read_ints()
         # assert nsize[icpu-1] == npart2
 
-        tmpp = np.empty((npart2,3), dtype=np.float64)#mem['pos_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
-        tmpv = np.empty((npart2,3), dtype=np.float64)#mem['vel_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1], :].view()
-        tmpm = np.empty(npart2, dtype=np.float64)#mem['mass_tmp_101'][cursors[icpu-1]-nsize[icpu-1]:cursors[icpu-1]].view()           
-        
-        # read all particle positions
-        # print(icpu, tmpp[:,0].shape, nsize[icpu-1], npart2, cursors[icpu-1], mem['pos_tmp_101'].shape)
-        for idim0 in range(H.ndim):
-            tmpp[:,idim0] = f.read_reals()
-        # read all particle velocities
-        for idim0 in range(H.ndim):
-            tmpv[:,idim0] = f.read_reals()
-        # read all particle masses
-        tmpm = f.read_reals()
+        if dmcount:
+            skip_records(f,H.ndim)
+            skip_records(f,H.ndim)
+            skip_records(f,1)
+        else:
+            tmpp = np.empty((npart2,3), dtype=np.float64)
+            tmpv = np.empty((npart2,3), dtype=np.float64)
+            tmpm = np.empty(npart2, dtype=np.float64)
+            
+            # read all particle positions
+            for idim0 in range(H.ndim):
+                tmpp[:,idim0] = f.read_reals()
+            # read all particle velocities
+            for idim0 in range(H.ndim):
+                tmpv[:,idim0] = f.read_reals()
+            # read all particle masses
+            tmpm = f.read_reals()
         # read all particle ids
         idp = f.read_ints()
         # read grid level of particles
@@ -276,37 +266,38 @@ def _read_ramses_new_1010(icpu, kwargs):
                 if(H.METALS):
                     skip_records(f, 1)
     # now sort DM particles in ascending id order and get rid of stars
-    if(rver=='Ra4'): mask = fam==1 # DM particles only
-    else: mask = (idp>0)&(tmpt==0)
+    if(rver=='Ra4'):
+        dmmask = fam==1
+        if dmcount:
+            mask = dmmask # DM particles only
+        else:
+            starmask = (fam==2)
+            mask = dmmask | starmask
+    else:
+        dmmask = (idp>0)&(tmpt==0)
+        if dmcount:
+            mask = dmmask
+        else:
+            starmask = ((tmpt < 0) & (idp > 0)) | ((tmpt != 0) & (idp < 0))
+            mask = dmmask | starmask
+    if not dmcount:
+        idp = np.abs(idp)
+        idp = np.where(starmask, idp+H.ndm, idp)
     npart_tmp = np.sum(mask)
-    for idim0 in range(H.ndim):
-        # put all positions between -0.5 and 0.5
-        mem['pos_tmp_101'][idp[mask]-1,idim0] = tmpp[mask,idim0]-0.5
-        # convert code units to km/s 
-        mem['vel_tmp_101'][idp[mask]-1,idim0] = tmpv[mask,idim0]*scale_l/scale_t*1e-5
-        mem['mass_tmp_101'][idp[mask]-1] = tmpm[mask]
+    if not dmcount:
+        ind = idp[mask]-1
+        pos_tmp_101 = H.maccess('pos_tmp_101')
+        for idim0 in range(H.ndim):
+            # put all positions between -0.5 and 0.5
+            pos_tmp_101[ind,idim0] = tmpp[mask,idim0]-0.5
+            # convert code units to km/s 
+            mem['vel_tmp_101'][ind,idim0] = tmpv[mask,idim0]*scale_l/scale_t*1e-5
+        mem['mass_tmp_101'][ind] = tmpm[mask]
     return npart_tmp
 #***********************************************************************
 import time
 def read_ramses_new_101(repository, rver='Ra3'):
     ''' This routine reads DM particles dumped in the RAMSES format.
-    implicit none
-
-    character(len=*)            :: repository
-    integer(kind=4)             :: ndim,npart,idim,icpu,ipos,H.ncpu,i,ipar
-    integer(kind=4)             :: ncpu2,npart2,ndim2
-    integer(kind=4)             :: nx,ny,nz,nlevelmax,ngridmax,nstep_coarse
-    integer(kind=4),allocatable :: idp(:)
-    real(kind=8)                :: boxlen,tco,aexp_ram,hexp
-    real(kind=8)                :: omega_m,omega_l,omega_k,omega_b
-    real(kind=8)                :: scale_l,scale_d,scale_t
-    real(kind=8)                :: mtot,massres
-    real(kind=8),allocatable    :: tmpp(:,:),tmpv(:,:),tmpm(:)
-    character*200               :: nomfich
-    character*5                 :: nchar,ncharcpu
-    logical                     :: ok
-
-    
     # NB: repository is directory containing output files
     # e.g. /horizon1/teyssier/ramses_simu/boxlen100_n256/output_00001/
     '''
@@ -399,28 +390,24 @@ def read_ramses_new_101(repository, rver='Ra3'):
         H.npart += npart2
 
     print(f"\t|> Found {H.npart} Total particles")
-    H.npart -= nstar
+    H.nstar = nstar
     H.nbodies = H.npart
-    print(f"\t|        {H.npart} non-stellar particles")
+    print(f"\t|        {H.npart-H.nstar} other particles")
     print(f"\t|        {nstar} star particles")
     print(f"\t|> Reading positions, velocities and masses...")
-    H.allocate('pos_tmp_101', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('vel_tmp_101', (H.npart, H.ndim), dtype=np.float64)
-    H.allocate('mass_tmp_101', (H.npart,), dtype=np.float64)
+    H.allocate('pos_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
+    H.allocate('vel_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
+    H.allocate('mass_tmp_101', (H.nbodies,), dtype=np.float64)
     H.massalloc = True
   
-    ##### MultiProcessing Start #####
-    # H.ncpu=4
-    # H.nbPes = 4
-    kwargs = {'repository':repository, 'rver':rver, 'nchar':nchar, 'ndim':H.ndim, 'scale_l':scale_l, 'scale_t':scale_t}
+    # Count only DM particles
+    kwargs = {'repository':repository, 'rver':rver, 'nchar':nchar, 'ndim':H.ndim, 'scale_l':scale_l, 'scale_t':scale_t, 'dmcount':True}
     iterobj = range(1,H.ncpu+1)
     if(H.nbPes==1): # Sequential reading
-        # if(H.TQDM):
-        #     iterobj = tqdm(range(1,H.ncpu+1), desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu")
         if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
-        npart_tmp = 0
+        ndm = 0
         for icpu1 in iterobj:
-            npart_tmp += _read_ramses_new_1010(icpu1, kwargs)
+            ndm += _read_ramses_new_1010(icpu1, kwargs)
             if(H.TQDM): pbar.update(1)
         if(H.TQDM): pbar.close()
     else: # Multiprocessing
@@ -430,28 +417,46 @@ def read_ramses_new_101(repository, rver='Ra3'):
             for icpu1 in iterobj:
                 r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
                 async_results.append((icpu1, r))
-            npart_tmp = 0
-            for icpu1, r in tqdm(async_results, total=H.ncpu, desc="\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
+            ndm = 0
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
                 try:
-                    npart_tmp += r.get(timeout=30)  # 30 sec
+                    ndm += r.get(timeout=300)  # 300 sec
                 except TimeoutError:
-                    print(f"\n[HANG?] icpu={icpu1} still not finished after 600s")
+                    print(f"\n[HANG?] icpu={icpu1} still not finished after 300s")
                     raise
-        #     iterobj = async_results
-        #     if(H.TQDM):
-        #         print(f"\t| > Creating tqdm iterator for process results...")
-        #         iterobj = tqdm(async_results, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", total=H.ncpu)
-        #     print(f"\t| > Waiting for all processes to finish...")
-        #     for async_result in iterobj:
-        #         npart_tmp += async_result.get()
-        #     print(f"\t| > All processes finished.")
-        # print(f"\t| > Escape Pool")
         signal.signal(signal.SIGTERM, H.flush)
-    print(f"\t|> Reading parts done", flush=True)
+    H.ndm =ndm
+    print(f"\t|> Found {H.ndm} DM particles after masking")
 
-    H.npart = npart_tmp
-    H.nbodies = H.npart
-    print(f"\t|> Found {H.npart} DM particles after masking")
+    H.nbodies = H.ndm + H.nstar
+    # Read all parts
+    kwargs['dmcount'] = False
+    iterobj = range(1,H.ncpu+1)
+    if(H.nbPes==1): # Sequential reading
+        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
+        npart = 0
+        for icpu1 in iterobj:
+            npart += _read_ramses_new_1010(icpu1, kwargs)
+            if(H.TQDM): pbar.update(1)
+        if(H.TQDM): pbar.close()
+    else: # Multiprocessing
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with Pool(processes=H.nbPes) as pool:
+            async_results = []
+            for icpu1 in iterobj:
+                r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
+                async_results.append((icpu1, r))
+            npart = 0
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t| Reading parts(nbPes={H.nbPes})", unit="cpu"):
+                try:
+                    npart += r.get(timeout=300)  # 300 sec
+                except TimeoutError:
+                    print(f"\n[HANG?] icpu={icpu1} still not finished after 300s")
+                    raise
+        signal.signal(signal.SIGTERM, H.flush)
+    H.npart = npart
+    print(f"\t|> Reading parts done", flush=True)
+    print(f"\t|> Found {H.npart} (DM+Star) particles after masking")
     H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_10', (H.npart,), dtype=np.float64)
@@ -463,9 +468,11 @@ def read_ramses_new_101(repository, rver='Ra3'):
     mtot = np.sum(mem['mass_10'])
     # that is for the dark matter so let's add baryons now if there are any 
     # and renormalization flag is on ##
-    massres = np.min(mem['mass_10'])*H.mboxp*1e11
-    H.massp   = np.min(mem['mass_10'])
-    print(f"\t|> particle mass (in M_sun)               = {massres}")
+    dmmassres = np.min(mem['mass_10'][:H.ndm])*H.mboxp*1e11
+    starmassres = np.min(mem['mass_10'][H.ndm:])*H.mboxp*1e11
+    H.massp   = np.min(mem['mass_10'][:H.ndm])
+    print(f"\t|> DM particle mass (in M_sun)               = {dmmassres}")
+    print(f"\t|> Star particle mass (in M_sun)             = {starmassres}")
     if(H.RENORM):
         massres /= mtot
         H.massp /= mtot
@@ -491,7 +498,6 @@ def write_tree_brick_1d():
         full_path = os.path.abspath(f'HAL_{nchar}')
         os.chmod(full_path, H.dchmod); os.chown(full_path, H.uid, H.gid)
 
-    done = False
     if(H.BIG_RUN):
         if(H.write_resim_masses):
             f44 = FortranFile(f'{H.data_dir}/resim_masses.dat', 'w')
@@ -501,6 +507,14 @@ def write_tree_brick_1d():
             full_path = os.path.abspath(f'{H.data_dir}/resim_masses.dat')
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
             H.write_resim_masses = False
+
+    whereIam_idxs = mem['whereIam_idxs']
+    whereIam_counts = mem['whereIam_counts']
+    pids0_groupsorted = mem['pids0_groupsorted']
+    if H.dump_dms:
+        mass_10 = mem['mass_10']
+        pos_10 = mem['pos_10']
+        vel_10 = mem['vel_10']
 
     if(not H.fsub):
         filename = f"{H.data_dir}/tree_brick_{nchar}"
@@ -515,47 +529,53 @@ def write_tree_brick_1d():
     f44.write_record(H.omega_t)
     f44.write_record(H.age_univ)
     f44.write_record(H.nb_of_halos, H.nb_of_subhalos)
-    for i0 in range(H.nb_of_halos + H.nb_of_subhalos):
+    # nb_of_parts_o0_1 = mem['nb_of_parts_o0_1']
+    # first_part_oo_1 = mem['first_part_oo_1']
+    timerecord = [0 for _ in range(10)]
+    iterator = range(H.nb_of_halos + H.nb_of_subhalos)
+    if H.verbose:
+        iterator = tqdm(iterator, desc="Writing halos", unit="halo")
+    for i0 in iterator:
+        ith=0; ref = time.time()
+        me = H.liste_halos_o0[i0+1]
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
+        # nmem = nb_of_parts_o0_1[i0+1]
+        nmem = whereIam_counts[i0+1]
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
+        idx = whereIam_idxs[i0+1]
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
+        count = whereIam_counts[i0+1]
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
+        indexps = pids0_groupsorted[idx:idx+count]
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
         # write list of particles in each halo
-        members = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.int32)
         if(H.dump_dms):
-            mass_memb = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.float64)
-            pos_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
-            vel_memb = np.empty((mem['nb_of_parts_o0_1'][i0+1],3), dtype=np.float64)
-            mdump = np.empty(mem['nb_of_parts_o0_1'][i0+1], dtype=np.float64)
-        ## Change here to get rid of the linked list and directly read the particle ids
-        start = mem['first_part_oo_1'][i0+1]
-        for j0 in range(mem['nb_of_parts_o0_1'][i0+1]):
-            members[j0] = start
-            if(H.dump_dms):
-                mass_memb[j0] = mem['mass_10'][start-1]
-                pos_memb[j0,0]=mem['pos_10'][start-1,0]
-                pos_memb[j0,1]=mem['pos_10'][start-1,1]
-                pos_memb[j0,2]=mem['pos_10'][start-1,2]
-                vel_memb[j0,0]=mem['vel_10'][start-1,0]
-                vel_memb[j0,1]=mem['vel_10'][start-1,1]
-                vel_memb[j0,2]=mem['vel_10'][start-1,2]
-            start = mem['linked_list_oo_1'][start]
-        f44.write_record(mem['nb_of_parts_o0_1'][i0+1])
+            mass_memb = mass_10[indexps]
+            pos_memb = pos_10[indexps]
+            vel_memb = vel_10[indexps]
+        members = indexps + 1 # particle ids are 1-based in Fortran
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
+        f44.write_record(nmem)
         f44.write_record(members)
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
 
         if(H.dump_dms):
-            ncharg = f"{H.liste_halos_o0[i0+1].my_number:07d}"
+            ncharg = f"{me['id']:07d}"
             nomfich = f"HAL_{nchar}/halo_dms_{ncharg}"
             f9 = FortranFile(nomfich, 'w')
-            f9.write_record(H.liste_halos_o0[i0+1].my_number)
-            f9.write_record(H.liste_halos_o0[i0+1].level)
-            f9.write_record(H.liste_halos_o0[i0+1].m)
-            f9.write_record(H.liste_halos_o0[i0+1].p.x,H.liste_halos_o0[i0+1].p.y,H.liste_halos_o0[i0+1].p.z)
-            f9.write_record(H.liste_halos_o0[i0+1].v.x,H.liste_halos_o0[i0+1].v.y,H.liste_halos_o0[i0+1].v.z)
-            f9.write_record(H.liste_halos_o0[i0+1].L.x,H.liste_halos_o0[i0+1].L.y,H.liste_halos_o0[i0+1].L.z)
-            f9.write_record(mem['nb_of_parts_o0_1'][i0+1])
+            f9.write_record(me['id'])
+            f9.write_record(me['level'])
+            f9.write_record(me['m'])
+            f9.write_record(me['px'],me['py'],me['pz'])
+            f9.write_record(me['vx'],me['vy'],me['vz'])
+            f9.write_record(me['Lx'],me['Ly'],me['Lz'])
+            f9.write_record(nmem)
             for idim0 in range(H.ndim):
-                mdump[mem['nb_of_parts_o0_1'][i0+1]]=pos_memb[mem['nb_of_parts_o0_1'][i0+1],idim0]
-                f9.write_record( mdump )
+                # mdump[:]=pos_memb[:,idim0]
+                f9.write_record( pos_memb[:,idim0] )
             for idim0 in range(H.ndim):
-                mdump[mem['nb_of_parts_o0_1'][i0+1]]=vel_memb[mem['nb_of_parts_o0_1'][i0+1],idim0]
-                f9.write_record( mdump )
+                # mdump[:]=vel_memb[:,idim0]
+                f9.write_record( vel_memb[:,idim0] )
             f9.write_record( mass_memb )
             f9.write_record( members )
             del mass_memb; del pos_memb; del vel_memb; del mdump
@@ -563,33 +583,183 @@ def write_tree_brick_1d():
             full_path = os.path.abspath(nomfich)
             os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
-        del members
-        # write each halo properties
-        write_halo_1d0(H.liste_halos_o0[i0+1],f44)
+        # del members
+        # write each halo properties [MAIN BOTTLENECK]
+        # write_halo_1d0(me,f44)
+        f44.write_record( me['id'] )
+        f44.write_record( me['timestep']  )
+        f44.write_record( me['level'],me['hosthalo'],me['hostsub'],me['nbsub'],me['nextsub'] )
+        f44.write_record( me['m'] )
+        f44.write_record( me['px'],me['py'],me['pz'] )
+        f44.write_record( me['vx'],me['vy'],me['vz'] )
+        f44.write_record( me['Lx'],me['Ly'],me['Lz']  )
+        f44.write_record( me['r'], me['sha'], me['shb'], me['shc'] )
+        f44.write_record( me['ek'],me['ep'],me['et'] )
+        f44.write_record( me['spin'] )
+        f44.write_record( me['sigma'] )
+        f44.write_record( me['rvir'],me['mvir'],me['tvir'],me['cvel'] )
+        f44.write_record( me['rho_0'],me['r_c'],me['cNFW'] )
+        f44.write_record( me['mcontam'] )
+        timerecord[ith]+=time.time()-ref; ith+=1; ref = time.time()
     f44.close()
     full_path = os.path.abspath(filename)
     os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
-#***********************************************************************
-def write_halo_1d0(h:halo,unitfile:FortranFile):
-    # Masses (h.m,h.datas.mvir) are in units of 10^11 Msol, and 
-    # Lengths (h.p.x,h.p.y,h.p.z,h.r,h.datas.rvir) are in units of Mpc
-    # Velocities (h.v.x,h.v.y,h.v.z,h.datas.cvel) are in km/s
-    # Energies (h.ek,h.ep,h.et) are in
-    # Temperatures (h.datas.tvir) are in K
-    # Angular Momentum (h.L.x,h.L.y,h.L.z) are in
-    # Other quantities are dimensionless (h.my_number,h.my_timestep,h.spin)  
 
-    unitfile.write_record( h.my_number )
-    unitfile.write_record( h.my_timestep  )
-    unitfile.write_record( h.level,h.hosthalo,h.hostsub,h.nbsub,h.nextsub )
-    unitfile.write_record( h.m )
-    unitfile.write_record( h.p.x,h.p.y,h.p.z )
-    unitfile.write_record( h.v.x,h.v.y,h.v.z )
-    unitfile.write_record( h.L.x,h.L.y,h.L.z  )
-    unitfile.write_record( h.r, h.sh.a, h.sh.b, h.sh.c )
-    unitfile.write_record( h.ek,h.ep,h.et )
-    unitfile.write_record( h.spin )
-    unitfile.write_record( h.sigma )
-    unitfile.write_record( h.datas.rvir,h.datas.mvir,h.datas.tvir,h.datas.cvel )
-    unitfile.write_record( h.halo_profile.rho_0,h.halo_profile.r_c )
+#***********************************************************************
+def write_tree_brick_hdf():
+    '''
+    This subroutine writes the information relevant to building a halo 
+    merging tree (using the build_tree program) i.e. for each halo:
+      1/ the list of all the particles it contains (this enables us --- as  
+         particle numbers are time independent --- to follow the halo history) 
+      2/ its properties which are independent of merging history (mass ...)
+    '''
+    import os, h5py
+    nchar   = f'{int(H.file_num):05d}'
+    if(H.dump_dms):
+        #    call system('mkdir HAL_'//TRIM(nchar))
+        os.mkdir(f'HAL_{nchar}')    
+        full_path = os.path.abspath(f'HAL_{nchar}')
+        os.chmod(full_path, H.dchmod); os.chown(full_path, H.uid, H.gid)
+
+    if(H.BIG_RUN):
+        if(H.write_resim_masses):
+            f44 = FortranFile(f'{H.data_dir}/resim_masses.dat', 'w')
+            f44.write_record(H.nbodies)
+            f44.write_record(mem['mass_10'])
+            f44.close()
+            full_path = os.path.abspath(f'{H.data_dir}/resim_masses.dat')
+            os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
+            H.write_resim_masses = False
+
+    whereIam_idxs = mem['whereIam_idxs']
+    whereIam_counts = mem['whereIam_counts']
+    pids0_groupsorted = mem['pids0_groupsorted']
+    if H.dump_dms:
+        mass_10 = mem['mass_10']
+        pos_10 = mem['pos_10']
+        vel_10 = mem['vel_10']
+
+    if(not H.fsub):
+        filename = f"{H.data_dir}/tree_brick_{nchar}.h5"
+    else:
+        filename = f"{H.data_dir}/tree_bricks{nchar}.h5"
+    # f44 = FortranFile(filename, 'w')
+    print()
+    print('> Output data to build halo merger tree to: ',filename)
+    with h5py.File(filename, 'w') as f44:
+        #---------------------------------
+        # HEADER
+        #---------------------------------
+        f44.create_group('header')
+        header = f44['header']
+        # Snapshot data
+        header.attrs['nbodies'] = H.nbodies
+        header.attrs['massp'] = H.massp
+        header.attrs['aexp'] = H.aexp
+        header.attrs['omega_t'] = H.omega_t
+        header.attrs['age_univ'] = H.age_univ
+        header.attrs['boxsize2']=H.boxsize2
+        header.attrs['hubble']=H.hubble
+        header.attrs['mboxp']=H.mboxp
+        # HaloMaker data
+        header.attrs['nb_of_halos'] = H.nb_of_halos
+        header.attrs['nb_of_subhalos'] = H.nb_of_subhalos
+        # User data
+        header.attrs['createtime'] = H.mprefix[2]
+
+        #---------------------------------
+        # INPUT
+        #---------------------------------
+        # input_HaloMaker.dat
+        f44.create_group('input')
+        finput = f44['input']
+        finput.attrs['omega_f']=H.omega_f
+        finput.attrs['omega_lambda_f']=H.omega_lambda_f
+        finput.attrs['af']=H.af
+        finput.attrs['Lf']=H.Lf
+        finput.attrs['H_f']=H.H_f
+        finput.attrs['FlagPeriod']=H.FlagPeriod
+        finput.attrs['nMembers']=H.nMembers
+        finput.attrs['cdm']=H.cdm
+        finput.attrs['method']=H.method
+        finput.attrs['b_init']=H.b_init
+        finput.attrs['nvoisins']=H.nvoisins
+        finput.attrs['nhop']=H.nhop
+        finput.attrs['rho_threshold']=H.rho_threshold
+        finput.attrs['fudge']=H.fudge
+        finput.attrs['fudgepsilon']=H.fudgepsilon
+        finput.attrs['alphap']=H.alphap
+        finput.attrs['verbose']=H.verbose
+        finput.attrs['megaverbose']=H.megaverbose
+        finput.attrs['DPMMC']=H.DPMMC
+        finput.attrs['SC']=H.SC
+        finput.attrs['dcell_min']=H.dcell_min
+        finput.attrs['eps_SC']=H.eps_SC
+        finput.attrs['nsteps']=H.nsteps
+        finput.attrs['dump_dms']=H.dump_dms
+
+        #---------------------------------
+        # Catalog
+        #---------------------------------
+        cat = H.liste_halos_o0[1:]
+        grp = f44.create_group('catalog')
+        grp.create_dataset('halo', shape=cat.shape, dtype=cat.dtype, data=cat, compression='lzf')
+
+        #---------------------------------
+        # Member
+        #---------------------------------
+        # cumsum index, 1d member IDs, ...
+        grp = f44.create_group('member')
+        grp.create_dataset('index', data=whereIam_idxs, compression='lzf')
+        pids = pids0_groupsorted+1 # 0-based to 1-based
+        grp.create_dataset('pids', data=pids, compression='lzf')
+        if H.dump_dms:
+            iterator = range(H.nb_of_halos + H.nb_of_subhalos)
+            if H.verbose:
+                iterator = tqdm(iterator, desc="Writing halo members", unit="halo")
+            for i0 in iterator:
+                idx = whereIam_idxs[i0+1]
+                count = whereIam_counts[i0+1]
+                indexps = pids[idx:idx+count] # 1-based
+                # write list of particles in each halo
+                if(H.dump_dms):
+                    mass_memb = mass_10[indexps]
+                    pos_memb = pos_10[indexps]
+                    vel_memb = vel_10[indexps]
+
+                mgrp=grp.create_group(f"{i0+1:07d}")
+                mgrp.create_dataset('id', data=indexps, compression='gzip')
+                mgrp.create_dataset('pos', data=pos_memb, compression='gzip')
+                mgrp.create_dataset('vel', data=vel_memb, compression='gzip')
+                mgrp.create_dataset('m', data=mass_memb, compression='gzip')
+
+    full_path = os.path.abspath(filename)
+    os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
+
+#***********************************************************************
+def write_halo_1d0(h:np.void,unitfile:FortranFile):
+    # Masses (h['m'],h['mvir']) are in units of 10^11 Msol, and 
+    # Lengths (h['x'],h['y'],h['z'],h['r'],h['rvir']) are in units of Mpc
+    # Velocities (h['vx'],h['vy'],h['vz'],h['cvel']) are in km/s
+    # Energies (h['ek'],h['ep'],h['et'])
+    # Temperatures (h['tvir']) are in K
+    # Angular Momentum (h['Lx'],h['Ly'],h['Lz']) are in
+    # Other quantities are dimensionless (h['id'],h['timestep'],h['spin'])  
+
+    unitfile.write_record( h['id'] )
+    unitfile.write_record( h['timestep']  )
+    unitfile.write_record( h['level'],h['hosthalo'],h['hostsub'],h['nbsub'],h['nextsub'] )
+    unitfile.write_record( h['m'] )
+    unitfile.write_record( h['px'],h['py'],h['pz'] )
+    unitfile.write_record( h['vx'],h['vy'],h['vz'] )
+    unitfile.write_record( h['Lx'],h['Ly'],h['Lz']  )
+    unitfile.write_record( h['r'], h['sha'], h['shb'], h['shc'] )
+    unitfile.write_record( h['ek'],h['ep'],h['et'] )
+    unitfile.write_record( h['spin'] )
+    unitfile.write_record( h['sigma'] )
+    unitfile.write_record( h['rvir'],h['mvir'],h['tvir'],h['cvel'] )
+    unitfile.write_record( h['rho_0'],h['r_c'],h['cNFW'] )
+    unitfile.write_record( h['mcontam'] )
+

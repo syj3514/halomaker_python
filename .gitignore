@@ -9,3 +9,12 @@ struct_tree.dat
 tree_bricks*
 **/*.ipynb
 **/__pycache__/
+.python-version
+compute_adaptahop.cpython*.so
+pyproject.toml
+requirements.txt
+uv.lock
+shm_clean.sh
+main.py
+pyrun.sh
+*.ipynb

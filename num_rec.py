@@ -2,6 +2,31 @@ import numpy as np
 from numba import njit, prange
 
 @njit
+def assign_struct_ids(nnodes, mothers, mostmasssub):
+    node_to_struct = np.full(nnodes, -1, dtype=np.int32)
+    nb_halos = 0
+    nb_sub = 0
+    istruct = 0
+    
+    for i in range(nnodes):
+        inode1 = i + 1
+        imother1 = mothers[i]
+        
+        if imother1 <= 0:
+            nb_halos += 1
+            istruct += 1
+            node_to_struct[i] = istruct
+        else:
+            if inode1 == mostmasssub[imother1 - 1]:
+                # 상속 (이 부분 때문에 단순 cumsum만으로는 안 됨)
+                node_to_struct[i] = node_to_struct[imother1 - 1]
+            else:
+                nb_sub += 1
+                istruct += 1
+                node_to_struct[i] = istruct
+    return node_to_struct, nb_halos, nb_sub
+
+@njit
 def counting_argsort_8(keys):
     n = keys.size
     cnt = np.zeros(8, np.int32)
@@ -346,40 +371,42 @@ def jacobi_gemini1(a_in, itermax=50):
 # subroutine `indexx` can be replaced by `np.argsort`
 
 #***********************************************************************
-def rf(x, y, z):
-    errtol = 0.08
-    tiny = 1.5e-38
-    big = 3.e37
-    third = 1. / 3.
-    c1 = 1. / 24.
-    c2 = 0.1
-    c3 = 3. / 44.
-    c4 = 1. / 14.
+from scipy.special import elliprf
+rf = elliprf
+# def rf(x, y, z):
+#     errtol = 0.08
+#     tiny = 1.5e-38
+#     big = 3.e37
+#     third = 1. / 3.
+#     c1 = 1. / 24.
+#     c2 = 0.1
+#     c3 = 3. / 44.
+#     c4 = 1. / 14.
 
-    if min(x, y, z) < 0.0 or min(x + y, x + z, y + z) < tiny or max(x, y, z) > big:
-        raise ValueError("Invalid arguments in rf")
+#     if min(x, y, z) < 0.0 or min(x + y, x + z, y + z) < tiny or max(x, y, z) > big:
+#         raise ValueError("Invalid arguments in rf")
 
-    xt = x
-    yt = y
-    zt = z
+#     xt = x
+#     yt = y
+#     zt = z
 
-    while True:
-        sqrtx = np.sqrt(xt)
-        sqrty = np.sqrt(yt)
-        sqrtz = np.sqrt(zt)
-        alamb = sqrtx * (sqrty + sqrtz) + sqrty * sqrtz
-        xt = 0.25 * (xt + alamb)
-        yt = 0.25 * (yt + alamb)
-        zt = 0.25 * (zt + alamb)
-        ave = third * (xt + yt + zt)
-        delx = (ave - xt) / ave
-        dely = (ave - yt) / ave
-        delz = (ave - zt) / ave
-        if max(abs(delx), abs(dely), abs(delz)) > errtol:
-            continue
-        e2 = delx * dely - delz ** 2
-        e3 = delx * dely * delz
-        return (1. + (c1 * e2 - c2 - c3 * e3) * e2 + c4 * e3) / np.sqrt(ave)
+#     while True:
+#         sqrtx = np.sqrt(xt)
+#         sqrty = np.sqrt(yt)
+#         sqrtz = np.sqrt(zt)
+#         alamb = sqrtx * (sqrty + sqrtz) + sqrty * sqrtz
+#         xt = 0.25 * (xt + alamb)
+#         yt = 0.25 * (yt + alamb)
+#         zt = 0.25 * (zt + alamb)
+#         ave = third * (xt + yt + zt)
+#         delx = (ave - xt) / ave
+#         dely = (ave - yt) / ave
+#         delz = (ave - zt) / ave
+#         if max(abs(delx), abs(dely), abs(delz)) > errtol:
+#             continue
+#         e2 = delx * dely - delz ** 2
+#         e3 = delx * dely * delz
+#         return (1. + (c1 * e2 - c2 - c3 * e3) * e2 + c4 * e3) / np.sqrt(ave)
 
 #***********************************************************************
 def cubic(a1, a2, a3, a4):

@@ -1,323 +1,14 @@
-#=======================================================================
-#                           COMPUTE_NEIKDTREE
-#=======================================================================
-# Author : S. Colombi
-#          Institut d'Astrophysique de Paris
-#          98 bis bd Arago, F-75014, Paris, France 
-#          colombi@iap.fr
-#
-# This program has multiple usage and can do three things
-# (1) Read an input particle distribution file and compute the mean
-#     square distance between each particle and its nearest neighbourgs
-# (2) Read an input particle distribution file and compute the SPH
-#     density associated to each particle + the list of its nearest
-#     neighbourgs
-# (3) Read an input particle distribution and a neighbourgs file which
-#     is an output of step 2), and output the tree of the structures in
-#     structures.
-#
-# If steps (1) and (2) are probably correct, step (3) is still under
-# test and construction. Step (1) was rather extensively tested, while
-# step (2) needs further tests although I am quite confident it should
-# be correct.
-#
-#=======================================================================
-#                           COMPUTE_NEIKDTREE_MOD
-#=======================================================================
-# Modication of compute_neiKDtree to fit inside HaloMaker
-# Modification : D. Tweed
-#
-# PARAMETERS IN THE CONFIG FILE 
-# +++++++++++++++++++++++++++++
-# 
-# A example of config file is given in compute_neiKDtree.config
-#
-#
-# H.verbose     : normal H.verbose mode (True or False)
-# H.megaverbose : full H.verbose mode (True or False)
-# filein      : name of the input particles/velocities file ('myfilename')
-# Ntype       : format of the file (integer number)
-#               0 : PM simple precision unformatted
-#               1 : GADGET simple precision unformatted, cosmological simulation
-#                   of dark matter only with periodic boundaries
-#               2 : RAMSES unformatted (particles) simulation
-#                   MPI multiple output
-#               3 : CONE unformatted 
-#               4 : Ninin treecode unformatted
-# remove_degenerate : if this set to True, check for particles at the same 
-#               position and add a random displacement at approximately 
-#               floating representation accuracy in order to avoid infinite
-#               number of KD tree cells creation. This parameter is global since
-#               if a random displacement has been applied once for computing
-#               SPH density, the same one must be applied again for subsequent 
-#               calculations in order to be self-consistent.
-#               Setting remove_degenerate=False will of course speep-up
-#               the program at the cost of a risk of crash due to infinite
-#               KD tree cell creation. This is however safe in most cases since
-#               KD tree creation can now deal with particles at the same position.
-#               It is therefore recommended to set remove_degenerate to False
-#               first before trying True
-# action      : 'distances' for computing mean square distance between each
-#                           particle and its nearest neighbourgs
-#               'neighbors' for computing the list of the nearest neighbourgs of
-#                           each particle and its SPH density
-#               'adaptahop' for computing the tree of structures and substructures
-#                           in the simulation 
-#               'posttreat' for computing the physical properties of dynamically
-#                           selected haloes and subhaloes
-#
-# if (Ntype=1) : GADGET format
-# --------------
-#
-# nmpigadget  : number of CPU used to perform the simulation (in order to read the 
-#               appropriate number of files). If there is no multiple file 
-#               extension (only one file), set nmpigadget=-1.
-#
-# if (Ntype=2) : RAMSES unformatted (dark matter particles)
-# --------------
-#
-# mtot        : total mass in the full simulation box, of the population considered,
-#               in internal RAMSES units.
-#               mtot=-1 works if full simulation box is analysed.
-# Ltot        : size of the full simulation box, in internal RAMSES units.
-#               Ltot=-1 gives default value, valid for cosmological simulations
-#               only.
-# 
-# if (Ntype=3) : CONE unformatted (dark matter particles) 
-# ------------------
-#
-# boxsize     : comoving size of the simulation box in Mpc
-#
-# if (Ntype=4) : Ninin treecode unformatted 
-# --------------
-#
-# boxsize2    : comoving size of the simulation box, in Mpc
-# hubble      : value of H0/100 in km/s/Mpc
-# omega0      : value of cosmological density parameter
-# omegaL      : value of cosmological constant
-# aexp_max    : value of expansion factor at present time
-#
-# if (action='distances') :
-# -------------------------
-#
-# nvoisdis    : number of neighbors considered for each particle
-# filedis     : name of the output file for the mean square distances 
-#               ('mydistancename')
-#               (this is a binary unformatted or formatted file which will be 
-#               described more in detail in the near future) 
-# formatted   : True if the output file is in ASCII, False if the output
-#               file is in binary unformatted double float.
-# ncpu        : number of virtual threads for a parallel calculation with openMP
-#               This integer number should be a multiple of the real number of 
-#               threads used during the run. The larger it will be, the better
-#               the load balancing will be. 
-# velocities  : True or False : if set to True, include velocities 
-#               treatment in the calculation and the output of the results
-#
-# if (action='neighbors') :
-# -------------------------
-#
-# nvoisnei    : number of neighbors considered for computing the SPH density
-#               (integer number). Typically this number should vary between
-#               20 and 100 (template value 64).
-# H.nhop        : number of stored nearest neighbourgs in the output file
-#              (integer number).
-#              H.nhop must smaller smaller or equal to nvoisnei. Typically H.nhop
-#              should be of order 10-30 (template value 16).
-# fileneinei  : name of the output file for the SPH density and the list of
-#              H.nhop nearest neighbors for each particle ('myfileneighbors')
-#              (this is a binary unformatted file which will be described more 
-#              in detail in the near future)
-#
-# if (action='adaptahop') :
-# -------------------------
-#
-# H.rho_threshold : density threshold. Particles with SPH density below this
-#              density threshold are not selected. This thresholding will
-#              define a number of connected regions, each of which corresponding
-#              to a structure. For each of these structures, we aim to 
-#              build a tree of substructures. Typically, one is interested
-#              in finding the substructures of highly nonlinear objects. A value
-#              often taken for H.rho_threshold is 80, which corresponds roughly
-#              to friend-of-friend algorithm parameter b=2.
-# H.nmembthresh: threshold on the number of particles that a structure or a
-#              a substructure (above some density threshold rhot) must contain 
-#              for being considered as significant.
-#              The choice of H.nmembthresh is related to effects of N-body relaxation
-#              (treecode) or over-softening of the forces (AMR or PM codes) or
-#              SPH smoothing (SPH smoothing over a number N of particles tends
-#              to ``erase'' structures with less than N particles).
-#              Basically, due to either of these effects, structures or 
-#              substructures with a number of particles smaller than H.nmembthresh
-#              are not considered. A typical choice of H.nmembthresh is 64.
-# fudgepsilon: This parameter can be seen as an Eulerian version of the thresholding
-#              controlled by H.nmembthresh. It defines the size of the smallest structures
-#              that can exist physically and is related to force softening.
-#              Basically, if epsilon is the softening parameter, substructures with
-#              typical radius smaller than epsilon are just coincidences and should
-#              not be considered. The typical radius of a structure is given by the
-#              mean square distance of particles belonging to it with respect to its
-#              center of gravity. 
-#              The criterion for selecting a structure is thus
-#              
-#              radius_{substructure} > epsilon,
-#             
-#              where epsilon=fudgepsilon*L/Npart^{1/3}. Fudgepsilon is thus expressed
-#              in units of mean interparticle separation.
-#              - For a treecode, fudgepsilon is typically of the order of 1/20;
-#              - For a PM code, fudgepsilon is typically of the order of N_g/Npart^{1/3}
-#              where N_g is the resolution of the grid used for the force calculations,
-#              i.e. of the order of 1 or 0.5.
-#              - For a quasi-Lagrangian code such as RAMSES, putting constrains from fudgespilon 
-#              is not really useful. Basically it corresponds to N_g/Npart^{1/3} where N_g
-#              would be the equivalent of the PM grid probed by the smallest AMR cells.              
-# alpha      : a criterion can be applied to decide weither a substructure
-#              is selected or not. Here the choice of alpha dictates by how
-#              much the maximum local density in this substructure should be larger
-#              than the local average density in this substructure:
-#
-#              rho_max_{substructure} >= alpha*< rho >_{substructure}.
-#
-#              Basically, the choice of alpha dictates the ``peakyness'' of a 
-#              substructure. For instance, a substructure might contain itself
-#              5 local maxima. For this substructure to be dynamically significant
-#              we want the largest of the local maxima to be at least alpha
-#              times the mean local density, i.e. the average density of all the
-#              particles within the substructure. Dynamically bounded substructures
-#              are expected to be very peaky. A typical choice of alpha would be
-#              alpha=0 or a few unites, e.g. alpha=4.
-# H.fudge      : a criterion can be applied to decide wither a substructure is 
-#              statistically significant in terms of Poisson noise. Indeed,
-#              even if Poisson noise is considerably reduced by SPH smoothing
-#              it is still present to some extent, and some substructures might
-#              be simply due to local Poisson fluctuations. 
-#              Here the choice of H.fudge dictates by how many ``sigma's'' 
-#              a structure must be compared to a random Poisson fluctuation.
-#              The criterion applied is
-#
-#              < rho >_{substructure} > rhot*[1+H.fudge/np.sqrt(N)]
-#
-#              where N is the number of particles in the substructure and rhot
-#              the density threshold corresponding to this substructure (in 
-#              other worlds, rhot is the minimum density of particles whithin
-#              the substructure). 
-#              This criterion can be understood as follows : if a given substructure
-#              contains N particles, the corresponding random poisson fluctuations are
-#              of the order of np.sqrt(N). So typically the uncertainty on the density
-#              estimate of a structure containing N particles is of the order of
-#              np.sqrt(N) (this of course neglects the fact that SPH softening reduces
-#              considerably the effects of poisson fluctuations). For the
-#              fluctuation associated to the substructure to be significant, we
-#              impose that (< rho >_{substructure} - rhot)/rhot > H.fudge*sigma with
-#              sigma=1/np.sqrt(N)=np.sqrt(< (M-<M>)^2 >)/<M> where M is a Poisson process
-#              of average N.
-#              A typical value is H.fudge=4.
-#
-#              IMPORTANT NOTE : we should always have H.fudge > 0. Small values of
-#              H.fudge will slow down the program, while large values of H.fudge will
-#              make the hierarchical decomposition in terms of substructures less
-#              accurate. 
-#              The reason for that is that despite the fact we know all the saddle points
-#              connecting all the substructures, it was impossible to figure out a simple
-#              way of sorting these saddle points in order to construct automatically
-#              the tree of structures and substructures. As a result, we operate 
-#              iteratively by increasing the local threshold density as follows:
-#              [rhot NEXT] = [rhot OLD]*[1+H.fudge/np.sqrt(N)] where N is the number of particles
-#              in the substructure. Then we see weither saddle points within this
-#              substructure are below the new value of rhot: if this happens, it
-#              means that at the density level [rhot NEXT], the substructure is composed
-#              of disconnected subsubstructures and the threshold value of connection
-#              between these subsubstructures is approximated by [rhot NEXT] (the real value
-#              should be between [rhot NEXT] and [rhot OLD]).
-# filenode   : output file for the tree of structures and substructures. See below
-#              for explanation of its format
-# simu_unitsnei : True or .false : to specifie if the nodes positions and radii in the
-#              file filenode are specified in the same units as in the simulation input
-#              file or in Mpc
-# filepartnodenei : ouput file for particule H.node_0 number. To each particle, a
-#              integer is associated, which is the H.node_0 number the deepest possible in the tree
-#              given in filenode. This way, at any level in the tree, it will be possible to
-#              find recursively all the particles belonging to the tree. If the H.node_0 number 
-#              is zero, it means the SPH density of particle is below the threshold H.rho_threshold 
-#              and is therefore associated to no structure. 
-# formattedpartnodenei : True for having filepartnodenei in ascii format, False for
-#              having filepartnodenei in binary format. The format is in both
-#              case, the number of particles H.npart in the first line, followed by id(:), 
-#              where id(:) is an array of H.npart integers.
-# fileneihop : input file with SPH density and list of nearest neighbors of each
-#              particle, obtained by running comptu_neiKDtree with action='neighbors'.
-#
-# if (action='posttreat') :
-# -------------------------
-# This option is still in development and test phase
-#
-#=======================================================================
-#
-# HISTORY
-# +++++++
-#
-# 02/05/02/SC/IAP : first operational clean version with namelist and
-#                   three options for the calculations.
-#                   + action='distances' tested by comparison with the
-#                   results of a different algorithm based on link list
-#                   approach instead of KDtree (compute_neighbourgs2.f)
-#                   The agreement between the 2 softwares is good within
-#                   float calculation accuracy (5.10^{-6} relative 
-#                   maximum differences). The differences can be 
-#                   explained by a slightly different approach used
-#                   in the 2 programs to do floating calculations.
-#                   + action='neighbors' is not fully tested but should be
-#                   okay. 
-#                   + action='adaptahop' has been seen to work fine on
-#                   a few data sets, but is not by any mean extensively
-#                   tested. (No comments on the parameters of the namelist
-#                   to avoid the users using this option)
-#                   --> Version 0.0
-# 04/05/02/SC/IAP : Full comments on the namelist parameters corresponding
-#                   to action='adaptahop'. A few comments are added to
-#                   the program. A new input particle file format is 
-#                   added (RAMSES). 
-#                   --> Version 0.1
-# 04/17/02/SC&RT/IAP : Clean up the RAMSES format. Speed up the SPH 
-#                   smoothing procedure
-#                   --> Version 0.2
-# 12/02/02/SC/IAP : Parallelize action='distances' and action='neighbors'
-#                   Add RAMSES dark matter format with periodic boundaries
-#                   (Ntype=-2), add CONE format (Ntype=3)
-#                   --> Version 0.3
-# 27/05/03/SC&RT/IAP&STR : Add RAMSES MPI dark matter + stars format with
-#                   periodic boundaries (still under work, Ntype=-20) and
-#                   a subroutine to remove degeneracy in particle positions
-#                   Add GADGET multiple file MPI format.
-# 04/06/03/SC/IAP : Dynamical selection of haloes and subhaloes :
-#                   + new action='posttreat'
-# 26/10/03/SC/IAP : add Ninin treecode format Ntype=4
-# 16/10/06/SC/IAP : Change the treecode algorithm to be able to deal with
-#                   2 or more particles at the same position. It is not
-#                   yet completely safe in terms of the calculation of
-#                   the SPH density (if all the particles are at the
-#                   same position one gets 0/0).
-#                   Add a few comments on file formats.
-#                   --> Version 0.8
-# 18/10/06/SC&RT/IAP : remove obsolete formats and improve RAMSES MPI
-#                   format (now swapped from -20 to 2).
-# 28/09/06/DT/CRAL: module compute_neiKDtree_mod.f90 compatibible with HaloMaker2.0
-# 24/09/07/DT/CRAL: choice of 3 selection method using flag method
-#                   HOP: Adaptahop is only used to detect haloes
-#                   DPM: Subhaloes are selected through the density profile method, 
-#                   accurate if studiing one step only
-#                   MHM: Subhaloes are selected through the merger history method, 
-#                   use this method if you need to obtain an accurate merger tree 
-#                   containing subhaloes
-#=======================================================================
 from itertools import count
 from weakref import ref
 import halo_defs as H
 from halo_defs import mem,frange,maccess, datdump, datload
 import numpy as np
 from tqdm import tqdm
-from num_rec import spline, splines,splines_numba, icellid, icellids, counting_argsort_8
-from multiprocessing import Pool, Manager
+from num_rec import spline, splines,splines_numba, icellid, icellids, counting_argsort_8, assign_struct_ids
+from multiprocessing import Manager
+import multiprocessing as mp
+ctx = mp.get_context('fork')
+Pool = ctx.Pool
 import time, os
 import faulthandler, signal, sys
 from scipy.spatial import cKDTree
@@ -343,26 +34,64 @@ from collections import defaultdict
 timers = defaultdict(float)
 #   contains
 
+if H.FORTRAN:
+    # import create_nodes
+    # from create_nodes import neikdtree
+    # from create_nodes import fhalo_defs as fH
+    from compute_adaptahop import neikdtree
+
 #=======================================================================
 def compute_adaptahop_131():
 #=======================================================================
+    timerecords = []
+    ref = time.time()
     change_pos_1310()
-    # action neighbors
-    if H.SCIPY:
-        tree = create_tree_structure_1311_scipy()
-        compute_mean_density_and_np_1312_scipy(tree)
+    timerecords.append(('    change_pos', -time.time()+ref)); ref = time.time()
+    if H.FORTRAN:
+        sync_fortran()
+        neikdtree.compute_adaptahop(
+            np.asfortranarray(mem['pos_10']),
+            np.asfortranarray(mem['mass_10']),)
+        timerecords.append(('    compute_adaptahop', -time.time()+ref)); ref = time.time()
+        
+        H.allocate('density_1312',H.npart, dtype=np.float64)
+        mem['whereIam_parts'][:] = neikdtree.liste_parts[:]
+        mem['density_1312'][:] = neikdtree.density[:]
+        H.nnodes = int(neikdtree.nnodes)
+        H.node_0 = np.zeros(H.nnodes+1, dtype=H.node_dtype)
+        arr = [neikdtree.real_table.T, neikdtree.integer_table.T]
+        node_0 = fromndarrays(arr, dtype=H.node_dtype)
+        H.node_0[1:] = node_0
+        
+        # Close real_table, integer_table, liste_parts, density
+        del arr
+        neikdtree.close()
+        timerecords.append(('    f2py', -time.time()+ref)); ref = time.time()
     else:
-        create_tree_structure_1311()
-        compute_mean_density_and_np_1312()
-    # action adaptahop
-    find_local_maxima_1313()
-    create_group_tree_1314()      # BOOKMARK <--  maybe done??
+        # action neighbors
+        if H.SCIPY:
+            tree = create_tree_structure_1311_scipy()
+            timerecords.append(('    create_tree', -time.time()+ref)); ref = time.time()
+            compute_mean_density_and_np_1312_scipy(tree)
+            timerecords.append(('    compute_density', -time.time()+ref)); ref = time.time()
+        else:
+            create_tree_structure_1311()
+            timerecords.append(('    create_tree', -time.time()+ref)); ref = time.time()
+            compute_mean_density_and_np_1312()
+            timerecords.append(('    compute_density', -time.time()+ref)); ref = time.time()
+        # action adaptahop
+        find_local_maxima_1313()
+        timerecords.append(('    find_local_maxima', -time.time()+ref)); ref = time.time()
+        create_group_tree_1314()      # MAIN BOTTLENECT
+    timerecords.append(('    create_group_tree', -time.time()+ref)); ref = time.time()
     change_pos_back_1315()
+    timerecords.append(('    change_pos_back', -time.time()+ref)); ref = time.time()
     # check that we have halos
     count_halos_1316()
+    timerecords.append(('    count_halos', -time.time()+ref)); ref = time.time()
     if(H.nb_of_halos>0):
         if(H.verbose): print()
-        if(H.verbose): print("Select halos and subhalos...")
+        if(H.verbose): print(f"{print_prefix}Select halos and subhalos...")
         _ref = time.time()
         # reinit halo and subhalo count
         H.nb_of_halos    = 0
@@ -392,9 +121,10 @@ def compute_adaptahop_131():
         mem['whereIam_idxs'] = idxs
         mem['whereIam_counts'] = counts
         if(H.verbose): print(f"{print_prefix}--> {time.time()-_ref:.2f} seconds to select halos")
-
+        timerecords.append(('    select_halos', -time.time()+_ref))
     else:
-        H.node_0 = []
+        H.node_0 = np.empty(0, dtype=H.node_dtype)
+    return timerecords
 
 #=======================================================================
 def list_parameters_1300():
@@ -451,13 +181,36 @@ def init_adaptahop_130():
     
     list_parameters_1300()
 
+    if H.FORTRAN:
+        neikdtree.sync_from_init_adaptahop(
+            # i4
+            H.npart,H.nmembthresh,H.nMembers,
+            # f8
+            H.omegaL, H.omega_lambda_f, 
+            H.omega0, H.omega_f, 
+            H.aexp_max, H.af, 
+            H.hubble, H.H_f, 
+            H.boxsize2, H.Lf, 
+            H.xlong, H.ylong, H.zlong, 
+            H.xlongs2, H.ylongs2, H.zlongs2,
+            H.Hub_pt,H.aexp,
+            # arr
+            H.pos_shift,
+        )
+
 #=======================================================================
 def change_pos_1310():
 #=======================================================================
     H.npart    = H.nbodies
     H.epsilon  = H.fudgepsilon*H.xlong/H.npart**(1/3)
-    if H.SCIPY: mem['pos_10'] += 0.5
+    if(H.SCIPY)and(not H.FORTRAN): mem['pos_10'] += 0.5
     mem['pos_10']      *= H.boxsize2
+    if H.FORTRAN:
+        neikdtree.sync_from_change_pos(
+            H.npart, H.nbodies, # i4
+            H.epsilon, H.fudgepsilon, H.xlong, H.boxsize2 # f8
+            )
+
 
 #=======================================================================
 def change_pos_back_1315():
@@ -468,9 +221,10 @@ def change_pos_back_1315():
 #=======================================================================
 def count_halos_1316():
 #=======================================================================
-    H.nb_of_halos = 0
-    for inode1 in frange(1,H.nnodes):
-        if(H.node_0[inode1].level==1): H.nb_of_halos += 1
+    # H.nb_of_halos = 0
+    # for inode1 in frange(1,H.nnodes):
+    #     if(H.node_0[inode1]['level']==1): H.nb_of_halos += 1
+    H.nb_of_halos = np.sum(H.node_0['level'][1:]==1)
 
 #=======================================================================
 def select_halos_1317():
@@ -480,10 +234,10 @@ def select_halos_1317():
     # counting number of halos
     H.nb_of_halos = 0
     for inode1 in frange(1,H.nnodes):
-        if(H.node_0[inode1].mother<=0): H.nb_of_halos += 1
+        if(H.node_0[inode1]['mother']<=0): H.nb_of_halos += 1
         ih1 = inode1
-        while(H.node_0[ih1].mother !=0):
-            ih1 = H.node_0[ih1].mother if(node_to_halo[ih1-1]<=0) else node_to_halo[ih1-1]
+        while(H.node_0[ih1]['mother'] !=0):
+            ih1 = H.node_0[ih1]['mother'] if(node_to_halo[ih1-1]<=0) else node_to_halo[ih1-1]
         node_to_halo[inode1-1] = ih1 
     print(f'{print_prefix}number of nodes :',H.nnodes)
     print(f'{print_prefix}number of haloes:', H.nb_of_halos)
@@ -497,7 +251,7 @@ def select_halos_1317():
             else:
                 raise ValueError('ihalo > nb_of_halos or nil')
 
-    H.node_0 = []
+    H.node_0 = np.empty(0, dtype=H.node_dtype)
 
 #=======================================================================
 def select_with_DP_method_1318():
@@ -505,23 +259,28 @@ def select_with_DP_method_1318():
     raise NotImplementedError('`select_with_DP_method` not implemented')
 
 #=======================================================================
-def select_with_MS_method_1319(mass_acc = 1.0e-2):
+def select_with_MS_method_1319(mass_acc = 1.0e-2, strict=False):
 #=======================================================================
     mostmasssub = np.zeros(H.nnodes, dtype=np.int32)
     node_to_struct = np.zeros(H.nnodes, dtype=np.int32)
-    if(H.verbose): print(f'{print_prefix}Using MS method')
+    if(H.verbose): print(f'{print_prefix}{print_prefix}Using MS method')
 
     # First recompute H.node_0 mass accordingly to their particle list
-    for inode1 in frange(1,H.nnodes):
-        isub1 = H.node_0[inode1].firstchild
+    where = np.where(H.node_0['firstchild']>0)[0]
+    if where[0]==0: where=where[1:]
+    for inode1 in where:
+    # for inode1 in frange(1,H.nnodes):
+        me = H.node_0[inode1]
+        isub1 = me['firstchild']
         while(isub1>0):
-            H.node_0[inode1].mass -= H.node_0[isub1].mass
-            H.node_0[inode1].truemass -= H.node_0[isub1].truemass
-            isub1 = H.node_0[isub1].sister
-        if(H.node_0[inode1].mass<=0 or H.node_0[inode1].truemass<=0.0):
+            me['mass'] -= H.node_0[isub1]['mass']
+            me['truemass'] -= H.node_0[isub1]['truemass']
+            isub1 = H.node_0[isub1]['sister']
+        if(me['mass']<=0 or me['truemass']<=0.0):
             print(f'{print_prefix}Error in computing H.node_0',inode1,'mass_10')
-            raise ValueError(' mass, truemass:', H.node_0[inode1].mass, H.node_0[inode1].truemass)
-    if(H.verbose):
+            raise ValueError(' mass, truemass:', me['mass'], me['truemass'])
+
+    if(H.verbose)and(strict):
         # check that the new masses are correct
         npartcheck_0 = np.zeros(H.nnodes+1, dtype=np.int32); npartcheck_0[:] = 0
         for ip1 in frange(1,H.nbodies):
@@ -529,130 +288,147 @@ def select_with_MS_method_1319(mass_acc = 1.0e-2):
             npartcheck_0[mem['whereIam_parts'][ip1-1]] += 1
         if(sum(npartcheck_0)!=H.nbodies): raise ValueError('Error in particles count')
         for inode1 in frange(1,H.nnodes):
-            if(H.node_0[inode1].mass!=npartcheck_0[inode1]):
+            if(H.node_0[inode1]['mass']!=npartcheck_0[inode1]):
                 print(f'{print_prefix}Error in H.node_0 particle count, for H.node_0',inode1)
-                print(f'{print_prefix}it first subnode is:',H.node_0[inode1].firstchild)
-                if(H.node_0[inode1].firstchild>0): print(f'{print_prefix}it has:',H.node_0[H.node_0[inode1].firstchild].nsisters,'subnodes' )
+                print(f'{print_prefix}it first subnode is:',H.node_0[inode1]['firstchild'])
+                if(H.node_0[inode1]['firstchild']>0): print(f'{print_prefix}it has:',H.node_0[H.node_0[inode1]['firstchild']]['nsisters'],'subnodes' )
                 raise ValueError("")
         del npartcheck_0
     
     mostmasssub[:]    = -1
+    firstchild = H.node_0['firstchild']
     for inode1 in frange(H.nnodes, 1, -1):
         # Search inode1 subnodes for the most massive one
-        isub1 = H.node_0[inode1].firstchild
+        # isub1 = H.node_0[inode1]['firstchild']
+        isub1 = firstchild[inode1]
         if(isub1>0):
             # init all on the first subnode
-            maxmasssub         = H.node_0[isub1].truemass
+            maxmasssub         = H.node_0[isub1]['truemass']
             mostmasssub[inode1-1] = isub1
-            isub1               = H.node_0[isub1].sister
+            isub1               = H.node_0[isub1]['sister']
         while(isub1>0):
-            if(H.node_0[isub1].truemass>maxmasssub):
-                maxmasssub         = H.node_0[isub1].truemass
+            if(H.node_0[isub1]['truemass']>maxmasssub):
+                maxmasssub         = H.node_0[isub1]['truemass']
                 mostmasssub[inode1-1] = isub1
-            isub1               = H.node_0[isub1].sister
+            isub1               = H.node_0[isub1]['sister']
         # add mostmasssub mass to inode1 mass and inode1's densmax = mostmasssub's densmax
         if (mostmasssub[inode1-1] > 0):
-            H.node_0[inode1].mass     += H.node_0[mostmasssub[inode1-1]].mass
-            H.node_0[inode1].truemass += H.node_0[mostmasssub[inode1-1]].truemass
-            H.node_0[inode1].densmax  = H.node_0[mostmasssub[inode1-1]].densmax
+            H.node_0[inode1]['mass']     += H.node_0[mostmasssub[inode1-1]]['mass']
+            H.node_0[inode1]['truemass'] += H.node_0[mostmasssub[inode1-1]]['truemass']
+            H.node_0[inode1]['densmax']  = H.node_0[mostmasssub[inode1-1]]['densmax']
 
     # Second run to write node_to_struct array and count the number of substructures
-    nb_sub         = 0
-    nb_halos       = 0
-    istruct        = 0
-    node_to_struct[:] = -1
-    
-    for inode1 in frange(1,H.nnodes):
-        if(node_to_struct[inode1-1]>0): raise ValueError('node_to_struct is greater than 0')
-        if(H.node_0[inode1].mother<=0):
-            nb_halos              += 1
-            istruct               += 1
-            node_to_struct[inode1-1] = istruct
-        else:
-            imother1  = H.node_0[inode1].mother
-            if(inode1==mostmasssub[imother1-1]):
-                if(node_to_struct[imother1-1]<=0): raise ValueError('node_to_struct not defined for imother1')
-                node_to_struct[inode1-1] = node_to_struct[imother1-1]
-            else:
-                nb_sub                += 1
-                istruct               += 1
-                node_to_struct[inode1-1] = istruct
+    mothers = H.node_0['mother'][1:]
+    indices = np.arange(1, H.nnodes + 1)
+    is_halo = (mothers <= 0)
+    valid_mother_idx = np.where(~is_halo, mothers - 1, 0) 
+    is_most_mass = (~is_halo) & (indices == mostmasssub[valid_mother_idx])
+    is_new_sub = (~is_halo) & (~is_most_mass)
+    nb_halos = np.sum(is_halo)
+    nb_sub = np.sum(is_new_sub)
+
+    # Assign a struct ID to each node
+    is_starter = is_halo | is_new_sub
+    starter_ids = np.zeros(H.nnodes, dtype=int)
+    starter_ids[is_starter] = np.cumsum(is_starter)[is_starter]
+
+    # Define the parent-child relationship: the most massive child points to its mother
+    parent = indices-1 # 0-based
+    parent[is_most_mass] = mothers[is_most_mass] - 1
+
+    # Pointer jumping
+    # : All nodes will point to the 'starter node' of their branch
+    for _ in range(int(np.ceil(np.log2(H.nnodes)))):
+        new_parent = parent[parent]
+        if np.array_equal(parent, new_parent):
+            break
+        parent = new_parent
+    node_to_struct[:] = starter_ids[parent]
     
     # check halos and subhalos number 
     H.nstruct = nb_halos + nb_sub
-    if(H.nstruct!=istruct):
-        raise ValueError('Error in subroutines count,',H.nstruct, istruct)
+    if strict:
+        istruct = np.max(starter_ids)
+        if(H.nstruct!=istruct):
+            raise ValueError('Error in subroutines count,',H.nstruct, istruct)
 
     if(H.verbose):
         # Check that the structure tree is ordered as it should be 
-        for inode1 in range(1,H.nnodes):
-            if(inode1<=nb_halos):
-                if( not( (H.node_0[inode1].level==1)and(node_to_struct[inode1-1]==inode1) )): raise ValueError('error in H.node_0 order' )
-            else:
-                if(H.node_0[inode1].level==1): raise ValueError('error shouldn''t be any halo here' )
-        print(f"{print_prefix}")
-        print(f'{print_prefix}> number of nodes               :', H.nnodes)
-        print(f'{print_prefix}> number of halos               :', nb_halos)
-        print(f'{print_prefix}> number of substructures       :', nb_sub)
-        print(f'{print_prefix}> number of node removed        :', H.nnodes - H.nstruct)
-        print(f"{print_prefix}")
-        print(f'{print_prefix}> Cleaning whereIam_parts')
-        npartcheck_0 = np.zeros(H.nstruct, dtype=np.int32)#; npartcheck_0[:] = 0
+        assert (H.node_0['level'][1:nb_halos+1]==1).all(), 'error in H.node_0 order'
+        assert (node_to_struct[:nb_halos] == indices[:nb_halos]).all(), 'error in H.node_0 order'
+        assert (H.node_0['level'][nb_halos+1:]!=1).all(), 'error shouldn''t be any halo here'
+        # for inode1 in range(1,H.nnodes):
+        #     if(inode1<=nb_halos):
+        #         if( not( (H.node_0[inode1]['level']==1)and(node_to_struct[inode1-1]==inode1) )):
+        #             raise ValueError('error in H.node_0 order' )
+        #     else:
+        #         if(H.node_0[inode1]['level']==1):
+        #             raise ValueError('error shouldn''t be any halo here' )
+        print(f"{print_prefix}{print_prefix}")
+        print(f'{print_prefix}{print_prefix}> number of nodes               :', H.nnodes)
+        print(f'{print_prefix}{print_prefix}> number of halos               :', nb_halos)
+        print(f'{print_prefix}{print_prefix}> number of substructures       :', nb_sub)
+        print(f'{print_prefix}{print_prefix}> number of node removed        :', H.nnodes - H.nstruct)
+        print(f"{print_prefix}{print_prefix}")
+        print(f'{print_prefix}{print_prefix}> Cleaning whereIam_parts')
+        if(strict):
+            npartcheck_0 = np.zeros(H.nstruct, dtype=np.int32)#; npartcheck_0[:] = 0
 
     # Cleaning whereIam_parts
-    for ip0 in range(H.nbodies):
-        inode1  = mem['whereIam_parts'][ip0]
-        if(inode1>0):
-            if(node_to_struct[inode1-1]<=0):
-                print(ip0, inode1,  node_to_struct[inode1-1])
-                raise ValueError('error in node_to_struct')
-            mem['whereIam_parts'][ip0] = node_to_struct[inode1-1]
-            if(H.verbose): npartcheck_0[node_to_struct[inode1-1]-1] += 1
-    if(H.verbose):
-        # Check H.node_0[inode].mass it should now correspond to npartcheck_0 count
+    ip0s = np.where(mem['whereIam_parts']>0)[0]
+    inode1s = mem['whereIam_parts'][ip0s]
+    mem['whereIam_parts'][ip0s] = node_to_struct[inode1s-1]
+
+    if(H.verbose)and(strict):
+        # Check H.node_0[inode]['mass'] it should now correspond to npartcheck_0 count
         for inode0 in range(H.nnodes):
             if(node_to_struct[inode0]<=0): raise ValueError('node_to_struct is nil')
-            imother1 = H.node_0[inode0+1].mother
+            imother1 = H.node_0[inode0+1]['mother']
             if((imother1<=0) or (imother1>0 and (node_to_struct[imother1-1]!=node_to_struct[inode0]))):
-                if(H.node_0[inode0+1].mass!=npartcheck_0[node_to_struct[inode0]-1]):
+                if(H.node_0[inode0+1]['mass']!=npartcheck_0[node_to_struct[inode0]-1]):
                     print(f'{print_prefix}Wrong nb of part in struct: ', node_to_struct[inode0])
-                    print(f'{print_prefix}inode0,H.node_0[inode0+1].mass,istruct,npartcheck_0(istruct)',inode0, \
-                        H.node_0[inode0+1].mass,node_to_struct[inode0],npartcheck_0[node_to_struct[inode0]-1])
+                    print(f"{print_prefix}inode0,H.node_0[inode0+1]['mass'],istruct,npartcheck_0(istruct)",inode0, \
+                        H.node_0[inode0+1]['mass'],node_to_struct[inode0],npartcheck_0[node_to_struct[inode0]-1])
                     raise ValueError("")
         del npartcheck_0
 
-    if(H.verbose): print(f'{print_prefix}> Creating new structure tree')
+    if(H.verbose): print(f'{print_prefix}{print_prefix}> Creating new structure tree')
     # creating new structure tree
     H.allocate('mother_1319', H.nstruct, dtype=np.int32)
     H.allocate('first_sister_1319', H.nstruct, dtype=np.int32)
     H.allocate('first_daughter_1319', H.nstruct, dtype=np.int32)
     H.allocate('level_1319', H.nstruct, dtype=np.int32)
-    mem['mother_1319'][:]         = -1
-    mem['first_sister_1319'][:]   = -1
-    mem['first_daughter_1319'][:] = -1
-    mem['level_1319'][:]          =  0
+
+    first_sister_1319 = mem['first_sister_1319']
+    mother_1319 = mem['mother_1319']
+    first_daughter_1319 = mem['first_daughter_1319']
+    level_1319 = mem['level_1319']
+    mother_1319[:]         = -1
+    first_sister_1319[:]   = -1
+    first_daughter_1319[:] = -1
+    level_1319[:]          =  0
     ihalo1          = -1 
 
     for inode0 in range(H.nnodes):
         istruct1 = node_to_struct[inode0]
         if(istruct1<=0): raise ValueError('index nil for istrut')
-        if(mem['mother_1319'][istruct1-1]<0):
-            if(H.node_0[inode0+1].mother<=0):
-                mem['mother_1319'][istruct1-1] = 0
-                if(ihalo1>0): mem['first_sister_1319'][ihalo1-1] = istruct1
+        if(mother_1319[istruct1-1]<0):
+            if(H.node_0[inode0+1]['mother']<=0):
+                mother_1319[istruct1-1] = 0
+                if(ihalo1>0): first_sister_1319[ihalo1-1] = istruct1
                 ihalo1 = istruct1
-                mem['level_1319'][istruct1-1] = 1
+                level_1319[istruct1-1] = 1
             else:
-                imother1          = node_to_struct[H.node_0[inode0+1].mother-1]
-                mem['mother_1319'][istruct1-1]  = imother1
-                mem['level_1319'][istruct1-1]   = mem['level_1319'][imother1-1] + 1
-                if(mem['first_daughter_1319'][imother1-1]<=0):
-                    mem['first_daughter_1319'][imother1-1] = istruct1
+                imother1          = node_to_struct[H.node_0[inode0+1]['mother']-1]
+                mother_1319[istruct1-1]  = imother1
+                level_1319[istruct1-1]   = level_1319[imother1-1] + 1
+                if(first_daughter_1319[imother1-1]<=0):
+                    first_daughter_1319[imother1-1] = istruct1
                 else:
-                    isub1 = mem['first_daughter_1319'][imother1-1]
-                    while(mem['first_sister_1319'][isub1-1]>0):
-                        isub1 = mem['first_sister_1319'][isub1-1]
-                    mem['first_sister_1319'][isub1-1] = istruct1
+                    isub1 = first_daughter_1319[imother1-1]
+                    while(first_sister_1319[isub1-1]>0):
+                        isub1 = first_sister_1319[isub1-1]
+                    first_sister_1319[isub1-1] = istruct1
 
     if(H.megaverbose):
         # For test we shall output the structure tree in file struct_tree.dat'
@@ -682,7 +458,7 @@ def select_with_MS_method_1319(mass_acc = 1.0e-2):
 
     H.nb_of_halos    = nb_halos
     H.nb_of_subhalos = nb_sub
-    H.node_0 = []
+    H.node_0 = np.empty(0, dtype=H.node_dtype)
 
 #=======================================================================
 def select_with_BH_method_131a():
@@ -722,34 +498,40 @@ def _compute_mean_density_chunk(ipar1start, ipar1end):
 #=======================================================================
 def compute_mean_density_and_np_1312_scipy(tree):
 #=======================================================================
-    if (H.verbose): print(f'{print_prefix}Compute mean density for each particle...')
-    ref = time.time()
+    if (H.verbose):
+        print(f'{print_prefix}Compute mean density for each particle...')
+        ref = time.time()
 
     H.allocate('iparneigh_1312',(H.nhop,H.npart), dtype=np.int32)
-    H.allocate('density_1312',H.npart, dtype=np.float64)
 
     # Neighbors
+    _ref = time.time()
     dist1_0s, idx0 = tree.query(mem['pos_10'], k=H.nhop+1, workers=H.nbPes)
     idx0 = idx0[:,1:]
     mem['iparneigh_1312'][:,:] = idx0.T+1
+    print(f"iparneigh ({time.time()-_ref:.6f} sec)")
 
     # Density
+    _ref = time.time()
+    H.allocate('density_1312',H.npart, dtype=np.float64)
     rs = dist1_0s[:,H.nvoisins]*0.5
-    imass = mem['mass_10']# if(H.massalloc) else H.massp
+    imass = mem['mass_10']
 
     tmp = dist1_0s[:,1:H.nvoisins+1] / rs[:,None]
-    # splined = splines(tmp)
     splined = splines_numba(tmp)
     contrib = np.sum(imass[idx0] * splined, axis=1) + imass
     mem['density_1312'][:] = (H.xlong*H.ylong*H.zlong)*contrib /(H.pi*rs**3)
+    print(f"density ({time.time()-_ref:.6f} sec)")
 
     
     # Check for average density
     if (H.verbose):
+        _ref = time.time()
         print(f"{print_prefix}    Calc average density...")
         densav = mem['density_1312'].mean()
         print(f'{print_prefix}--> Average density :',densav)
-    print(f"{print_prefix}--> {time.time()-ref:.2f} seconds to compute mean density")
+        print(f"avgdensity ({time.time()-_ref:.6f} sec)")
+        print(f"{print_prefix}--> {time.time()-ref:.2f} seconds to compute mean density")
     
 #=======================================================================
 def compute_mean_density_and_np_1312():
@@ -844,8 +626,8 @@ def find_local_maxima_1313():
     H.ngroups=0
     density = mem['density_1312']
     iparneigh = mem['iparneigh_1312']
-    arange1 = np.arange(1, H.npart+1)
     arange0 = np.arange(H.npart)
+    arange1 = arange0+1
     denmask = density > H.rho_threshold
     darr = np.empty((H.nhop+1, H.npart), dtype=density.dtype)
     darr[0,:] = density; darr[1:,:] = density[iparneigh - 1]
@@ -950,6 +732,86 @@ def init_group_members():
     getgroup_material = None
 
 
+def sync_fortran():
+    assert H.FORTRAN
+    neikdtree.sync_others(
+        H.verbose, H.npart, H.nbPes,
+        H.rho_threshold, H.massp, H.boxsize,
+        H.nhop, H.nvoisins,
+        H.fudge, H.alphap,
+        H.method, H.nlevelmax,
+    )
+
+def get_bytes_data(array):
+    # works as non-copy view of structured array if array is contiguous
+    barr = array.view('b').reshape((array.size, array.itemsize))
+    return barr
+
+def fromndarrays(ndarrays, dtype):
+    """
+    convert list of ndarray to structured array with given dtype
+    faster than np.rec.fromarrays
+    only works for 2d arrays for now
+    """
+    descr = np.dtype(dtype)
+
+    itemsize = 0
+    nitem = None
+    for nda in ndarrays:
+        if (nitem is None):
+            nitem = nda.shape[0]
+        elif (nitem != nda.shape[0]):
+            raise ValueError("Array shape does not match")
+        itemsize += nda.shape[1] * nda.dtype.itemsize
+    if (descr.itemsize != itemsize):
+        raise ValueError(f"Sum of itemsize ({itemsize}) does not match with desired dtype ({descr.itemsize})")
+
+    array = np.empty(nitem, descr)
+    barr = get_bytes_data(array)
+    col = 0
+    for nda in ndarrays:
+        bnda = nda.view('b')
+        barr[:, col:col + bnda.shape[1]] = bnda
+        col += bnda.shape[1]
+    return array
+
+# #=======================================================================
+# def create_group_tree_1314_fortran():
+# #=======================================================================
+#     sync_fortran()
+#     neikdtree.create_group_tree(
+#         # (nhop, npart)
+#         np.asfortranarray(mem['iparneigh_1312']), # unchanged
+#         # (npart,)
+#         np.asfortranarray(mem['igrouppart_1313']),# unchanged
+#         np.asfortranarray(mem['idpart_1311']),
+#         np.asfortranarray(mem['density_1312']),   # unchanged
+#         # (npart, 3)
+#         np.asfortranarray(mem['pos_10']),         # unchanged
+#         # (ngroups,)
+#         np.asfortranarray(mem['densityg_1313']),
+#         np.asfortranarray(mem['firstpart_1313']),
+#         # (nbodies, )
+#         np.asfortranarray(mem['whereIam_parts'])
+#         )
+
+#     mem['whereIam_parts'][:] = neikdtree.liste_parts[:]
+#     H.nnodes = int(neikdtree.nnodes)
+#     H.node_0 = np.zeros(H.nnodes+1, dtype=H.node_dtype)
+#     arr = [neikdtree.real_table.T, neikdtree.integer_table.T]
+#     node_0 = fromndarrays(arr, dtype=H.node_dtype)
+#     H.node_0[1:] = node_0
+    
+#     # Close real_table, integer_table, liste_parts
+#     del arr
+#     neikdtree.close()
+
+#     H.deallocate('igrouppart_1313')
+#     H.deallocate('iparneigh_1312')
+#     H.deallocate('idpart_1311')
+#     H.deallocate('densityg_1313')
+#     H.deallocate('firstpart_1313')
+
 
 #=======================================================================
 def create_group_tree_1314():
@@ -959,13 +821,15 @@ def create_group_tree_1314():
     # End of the branches of the tree
     ref = time.time()
     compute_saddle_list_13140()
+    # Output: H.group
     if (H.verbose): print(f"{print_prefix}--> {time.time()-ref:.2f} seconds to saddle_list")
 
     if (H.verbose): print(f'{print_prefix}Build the hierarchical tree')
 
     H.nnodesmax=2*H.ngroups
+
     # Allocations
-    H.node_0 = [H.supernode() for _ in range(H.nnodesmax+1)]
+    H.node_0 = np.zeros(H.nnodes+1, dtype=H.node_dtype)
     H.allocate('idgroup_1314',H.ngroups, dtype=np.int32)
     H.allocate('color_1314',H.ngroups, dtype=np.int32)
     H.allocate('igroupid_1314',H.ngroups, dtype=np.int32)
@@ -978,7 +842,7 @@ def create_group_tree_1314():
     inode               = 0
     H.nnodes            = 0
     rhot                = H.rho_threshold
-    H.node_0[inode].mother  = 0
+    H.node_0[inode]['mother']  = 0
     mass_loc            = 0
     truemass            = 0
     igroupref           = 0
@@ -992,18 +856,20 @@ def create_group_tree_1314():
     groupmask = igrouppart > 0
     _ipar0 = np.where(groupmask)[0]
     mass_loc = len(_ipar0)
-    truemass = np.sum(mass[_ipar0])# if (H.massalloc) else H.massp*mass_loc
+    truemass = np.sum(mass[_ipar0])
 
-    H.node_0[inode].mass          = mass_loc
-    H.node_0[inode].truemass      = truemass
-    H.node_0[inode].radius        = 0
-    H.node_0[inode].density       = 0
-    H.node_0[inode].position[:3]  = 0
-    H.node_0[inode].densmax       = np.max(mem['densityg_1313'])
-    H.node_0[inode].rho_saddle    = 0.
-    H.node_0[inode].level         = 0
-    H.node_0[inode].nsisters      = 0
-    H.node_0[inode].sister        = 0
+    H.node_0[inode]['mass']          = mass_loc
+    H.node_0[inode]['truemass']      = truemass
+    H.node_0[inode]['radius']        = 0
+    H.node_0[inode]['density']       = 0
+    H.node_0[inode]['px']  = 0
+    H.node_0[inode]['py']  = 0
+    H.node_0[inode]['pz']  = 0
+    H.node_0[inode]['densmax']       = np.max(mem['densityg_1313'])
+    H.node_0[inode]['rho_saddle']    = 0.
+    H.node_0[inode]['level']         = 0
+    H.node_0[inode]['nsisters']      = 0
+    H.node_0[inode]['sister']        = 0
     igrA = 1
     igrB = H.ngroups
     mem['idgroup_1314'][:] = np.arange(1, H.ngroups+1)
@@ -1022,16 +888,13 @@ def create_group_tree_1314():
     # for i, itime in enumerate(mem['timer_1314']):
     #     print(f"{print_prefix}    Timer {i}: {itime:.6f} seconds")
 
-    H.deallocate('timer_1314')
+    # H.deallocate('timer_1314')
     H.deallocate('igrouppart_1313')
     H.deallocate('idgroup_1314')
     H.deallocate('color_1314')
     H.deallocate('igroupid_1314')
     H.deallocate('idgroup_tmp_1314')
-    H.deallocate('idgroup2_1314')
-    H.deallocate('igroupid2_1314')
     H.deallocate('idpart_1311')
-    # H.deallocate('group')
     H.deallocate('densityg_1313')
     H.deallocate('firstpart_1313')
 
@@ -1227,43 +1090,44 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                     print(f'{print_prefix}ERROR in create_nodes :')
                     raise ValueError(f'H.nnodes({H.nnodes}) > H.nnodes max({H.nnodesmax})')
                 if((H.nnodes%max(H.nnodesmax/10000,1))==0 and H.megaverbose): print(f'{print_prefix}H.nnodes=',H.nnodes)
-                H.node_0[H.nnodes].mother=inode
-                H.node_0[H.nnodes].densmax=densmaxg[icolor0]
-                if (isisters>1): H.node_0[H.nnodes].sister=H.nnodes-1
-                else: H.node_0[H.nnodes].sister=0
+                H.node_0[H.nnodes]['mother']=inode
+                H.node_0[H.nnodes]['densmax']=densmaxg[icolor0]
+                if (isisters>1): H.node_0[H.nnodes]['sister']=H.nnodes-1
+                else: H.node_0[H.nnodes]['sister']=0
 
-                H.node_0[H.nnodes].nsisters=nsisters
-                H.node_0[H.nnodes].mass=massg[icolor0]
-                H.node_0[H.nnodes].truemass=truemassg[icolor0]
+                H.node_0[H.nnodes]['nsisters']=nsisters
+                H.node_0[H.nnodes]['mass']=massg[icolor0]
+                H.node_0[H.nnodes]['truemass']=truemassg[icolor0]
                 if (massg[icolor0]==0):
                     print(f'{print_prefix}ERROR in create_nodes :')
                     raise ValueError(f'NULL mass for H.nnodes={H.nnodes}')
                 posfin = posgg[:3,icolor0]/truemassg[icolor0]
-                H.node_0[H.nnodes].radius=rsquare[icolor0]
-                H.node_0[H.nnodes].density=densmoy[icolor0]
+                H.node_0[H.nnodes]['radius']=rsquare[icolor0]
+                H.node_0[H.nnodes]['density']=densmoy[icolor0]
                 posfin -= np.round(posfin / H.boxarr) * H.boxarr
-                H.node_0[H.nnodes].position[:3]=posfin[:3]
-                H.node_0[H.nnodes].rho_saddle=rhot
-                H.node_0[H.nnodes].level = H.node_0[inode].level+1
-                # if (H.megaverbose and (H.node_0[H.nnodes].mass>=H.nmembthresh)):
+                H.node_0[H.nnodes]['px']=posfin[0]
+                H.node_0[H.nnodes]['py']=posfin[1]
+                H.node_0[H.nnodes]['pz']=posfin[2]
+                H.node_0[H.nnodes]['rho_saddle']=rhot
+                H.node_0[H.nnodes]['level'] = H.node_0[inode]['level']+1
+                # if (H.megaverbose and (H.node_0[H.nnodes]['mass']>=H.nmembthresh)):
                 #     print(f'{print_prefix}*****************************************')
                 #     print(f'{print_prefix}new H.node_0 :',H.nnodes)
-                #     print(f'{print_prefix}level    :',H.node_0[H.nnodes].level)
-                #     print(f'{print_prefix}nsisters :',H.node_0[H.nnodes].nsisters)
-                #     print(f'{print_prefix}mass     :',H.node_0[H.nnodes].mass)
-                #     print(f'{print_prefix}true mass:',H.node_0[H.nnodes].truemass)
-                #     print(f'{print_prefix}radius   :',H.node_0[H.nnodes].radius)
-                #     print(f'{print_prefix}position :',H.node_0[H.nnodes].position)
-                #     print(f'{print_prefix}rho_saddl:',H.node_0[H.nnodes].rho_saddle)
-                #     print(f'{print_prefix}rhomax   :',H.node_0[H.nnodes].densmax)
+                #     print(f'{print_prefix}level    :',H.node_0[H.nnodes]['level'])
+                #     print(f'{print_prefix}nsisters :',H.node_0[H.nnodes]['nsisters'])
+                #     print(f'{print_prefix}mass     :',H.node_0[H.nnodes]['mass'])
+                #     print(f'{print_prefix}true mass:',H.node_0[H.nnodes]['truemass'])
+                #     print(f'{print_prefix}radius   :',H.node_0[H.nnodes]['radius'])
+                #     print(f'{print_prefix}position : ({H.node_0[H.nnodes]['px']}, {H.node_0[H.nnodes]['py']}, {H.node_0[H.nnodes]['pz']})')
+                #     print(f'{print_prefix}rho_saddl:',H.node_0[H.nnodes]['rho_saddle'])
+                #     print(f'{print_prefix}rhomax   :',H.node_0[H.nnodes]['densmax'])
                 #     print(f'{print_prefix}*****************************************')
-        H.node_0[inode].firstchild=H.nnodes
+        H.node_0[inode]['firstchild']=H.nnodes
         inodeout=inodetmp
         # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
         # # 0.21 sec
         for icolor0 in range(inc_color_tot):
             if (ifok[icolor0]):
-                ref = time.time()
                 igrAout=igrposnew_0[icolor0]+1
                 igrBout=igrposnew_0[icolor0+1]
                 for igr1 in frange(igrAout, igrBout):
@@ -1274,7 +1138,7 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
                 if (igrBout!=igrAout):
                     create_nodes_13143(rhotout,inodeout,igrAout,igrBout, pool=pool)
                 else:
-                    H.node_0[inodeout].firstchild=0
+                    H.node_0[inodeout]['firstchild']=0
                 inodeout += 1
     elif (nsisters==1):
         inodeout=inode
@@ -1284,9 +1148,9 @@ def create_nodes_13143(rhot,inode,igrA,igrB, pool=None):
         # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
         # # 0.21 sec
         if (igrBout!=igrAout): create_nodes_13143(rhotout,inodeout,igrAout,igrBout, pool=pool)
-        else: H.node_0[inode].firstchild=0
+        else: H.node_0[inode]['firstchild']=0
     else:
-        H.node_0[inode].firstchild=0
+        H.node_0[inode]['firstchild']=0
         # timer[ith] += time.time()-ref; ith+=1; ref=time.time()
         # # 0.21 sec
 
@@ -1319,7 +1183,7 @@ def treat_particles_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densm
     idpart = mem['idpart_1311']
     firstpart = mem['firstpart_1313']
     pos = mem['pos_10']
-    mass = mem['mass_10']# if(H.massalloc) else H.massp
+    mass = mem['mass_10']
     while (ipar1>0):
         if (density[ipar1-1] > rhot):
             if ( not first_good):
@@ -1336,7 +1200,7 @@ def treat_particles_13141(igroup1,rhot,posg,imass,igroupref,posref,rsquare,densm
                 
             iparold1=ipar1
             imass += 1
-            xmasspart = mass[ipar1-1]# if(H.massalloc) else H.massp
+            xmasspart = mass[ipar1-1]
             truemass += xmasspart
             dpos = pos[ipar1-1,:3] - posref[:3]
             dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos) + posref
@@ -1371,7 +1235,7 @@ def treat_particles_new_13141(igroup1,rhot,igroupref,posref, strict=False):
     if (mask.any())and(firstpart[igroup1-1]>0):
         idpart = mem['idpart_1311']
         pos = mem['pos_10']
-        mass = mem['mass_10']# if(H.massalloc) else H.massp
+        mass = mem['mass_10']
         dens = dens[mask]
         ipar1s = _ipar1s[mask]
         firstpart[igroup1-1] = ipar1s[-1]
@@ -1382,13 +1246,12 @@ def treat_particles_new_13141(igroup1,rhot,igroupref,posref, strict=False):
             densmin, densmax = np.min(dens), np.max(dens)
 
         imass = len(ipar1s)
-        truemass = np.sum(mass[ipar1s-1])# if (H.massalloc) else H.massp*imass
+        truemass = np.sum(mass[ipar1s-1])
         dpos = pos[ipar1s-1,:3] - posref[:3]
         boxarr = H.boxarr
         dpos = np.where(dpos > boxarr/2, boxarr - dpos, dpos) + posref
-        # posg[:3] += np.sum(dpos[:,:3]*mass[ipar1s-1][:,None], axis=0) if (H.massalloc) else np.sum(dpos[:,:3]*H.massp, axis=0)
-        posg = np.sum(dpos[:,:3]*mass[ipar1s-1][:,None], axis=0)# if (H.massalloc) else np.sum(dpos[:,:3]*H.massp, axis=0)
-        rsquare = np.sum(mass[ipar1s-1][:,None]*np.sum(dpos[:,:3]**2, axis=1)[:,None])# if (H.massalloc) else np.sum(H.massp*np.sum(dpos[:,:3]**2, axis=1))
+        posg = np.sum(dpos[:,:3]*mass[ipar1s-1][:,None], axis=0)
+        rsquare = np.sum(mass[ipar1s-1][:,None]*np.sum(dpos[:,:3]**2, axis=1)[:,None])
         densmoy = np.sum(dens)
 
         idpart[ipar1s[1:]-1] = ipar1s[:-1] # <--BOOKMARK: not sure if this is correct
