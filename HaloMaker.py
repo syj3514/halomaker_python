@@ -53,7 +53,6 @@ def main():
             default=None,
         )
     H.args = parser.parse_args()
-    print(H.args)
     H.output_dir = H.args.output_dir
     # if(len(sys.argv)<2): H.output_dir = '.'
     # else: H.output_dir = sys.argv[1]

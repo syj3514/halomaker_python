@@ -312,10 +312,10 @@ def read_ramses_new_101(repository, rver='Ra3'):
     signal.signal(signal.SIGINT, signal.SIG_DFL)#, H.flush)
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)#, H.flush)
     signal.signal(signal.SIGTERM, H.flush)
-    print()
-    print(f"\t------------------------------------------------------------------")
-    print(f"\t| Reading RAMSES version {rver}  ")
-    print(f"\t------------------------------------------------------------------")
+    if(H.verbose): print()
+    if(H.verbose): print(f"\t------------------------------------------------------------------")
+    if(H.verbose): print(f"\t| Reading RAMSES version {rver}  ")
+    if(H.verbose): print(f"\t------------------------------------------------------------------")
     # read cosmological params in header of amr file
     ipos    = repository.find("output_")
     nchar   = repository[ipos+7:ipos+12]
@@ -338,11 +338,11 @@ def read_ramses_new_101(repository, rver='Ra3'):
         omega_m,omega_l,omega_k,omega_b,dummy = temp[:5]
         temp = f.read_reals()
         aexp_ram, hexp = temp[:2]
-    print(f"\t|> From AMR file: `{nomfich}`")
-    print(f"\t|>     ncpu={H.ncpu:6d}, ndim={H.ndim:1d}, nstep_coarse={nstep_coarse:6d}")
-    print(f"\t|>     nlevelmax={H.nlevelmax:3d}, ngridmax={ngridmax:8d}")
-    print(f"\t|>     t={tco:.3E}, aexp={aexp_ram:.3E}, hexp={hexp:.3E}")
-    print(f"\t|>     omega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
+    if(H.verbose): print(f"\t|> From AMR file: `{nomfich}`")
+    if(H.verbose): print(f"\t|>     ncpu={H.ncpu:6d}, ndim={H.ndim:1d}, nstep_coarse={nstep_coarse:6d}")
+    if(H.verbose): print(f"\t|>     nlevelmax={H.nlevelmax:3d}, ngridmax={ngridmax:8d}")
+    if(H.verbose): print(f"\t|>     t={tco:.3E}, aexp={aexp_ram:.3E}, hexp={hexp:.3E}")
+    if(H.verbose): print(f"\t|>     omega_m={omega_m:.3f}, omega_l={omega_l:.3f}, omega_k={omega_k:.3f}, omega_b={omega_b:.3f}")
 
     nomfich = f"{repository}/info_{nchar}.txt"
     with open(nomfich, 'r') as f:
@@ -372,11 +372,11 @@ def read_ramses_new_101(repository, rver='Ra3'):
     H.omega_f        = omega_m
     H.omega_lambda_f = omega_l
     H.omega_c_f      = omega_k
-    print(f"\t|>     boxlen={boxlen*scale_l/np.float64(3.08e24):.3e} h-1 Mpc")
+    if(H.verbose): print(f"\t|>     boxlen={boxlen*scale_l/np.float64(3.08e24):.3e} h-1 Mpc")
 
     # now read the particle data files
     nomfich = f"{repository}/part_{nchar}.out00001"
-    print(f"\t|> From Part file: `{nomfich}`")
+    if(H.verbose): print(f"\t|> From Part file: `{nomfich}`")
     with FortranFile(nomfich, 'r') as f:
         H.ncpu, = f.read_ints()
         H.ndim, = f.read_ints()
@@ -396,12 +396,12 @@ def read_ramses_new_101(repository, rver='Ra3'):
             nsink, = f.read_ints()
         H.npart += npart2
 
-    print(f"\t|> Found {H.npart} Total particles")
+    if(H.verbose): print(f"\t|> Found {H.npart} Total particles")
     H.nstar = nstar
     H.nbodies = H.npart
-    print(f"\t|        {H.npart-H.nstar} other particles")
-    print(f"\t|        {nstar} star particles")
-    print(f"\t|> Reading positions, velocities and masses...")
+    if(H.verbose): print(f"\t|        {H.npart-H.nstar} other particles")
+    if(H.verbose): print(f"\t|        {nstar} star particles")
+    if(H.verbose): print(f"\t|> Reading positions, velocities and masses...")
     H.allocate('pos_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
     H.allocate('vel_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
     H.allocate('mass_tmp_101', (H.nbodies,), dtype=np.float64)
@@ -411,7 +411,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
     kwargs = {'repository':repository, 'rver':rver, 'nchar':nchar, 'ndim':H.ndim, 'scale_l':scale_l, 'scale_t':scale_t, 'dmcount':True}
     iterobj = range(1,H.ncpu+1)
     if(H.nbPes==1): # Sequential reading
-        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout)
+        if(H.TQDM): pbar = tqdm(total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", file=sys.stdout, disable=(not H.verbose))
         ndm = 0
         for icpu1 in iterobj:
             ndm += _read_ramses_new_1010(icpu1, kwargs)
@@ -425,7 +425,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
                 r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
                 async_results.append((icpu1, r))
             ndm = 0
-            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu"):
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", disable=(not H.verbose)):
                 try:
                     ndm += r.get(timeout=300)  # 300 sec
                 except TimeoutError:
@@ -433,7 +433,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
                     raise
         signal.signal(signal.SIGTERM, H.flush)
     H.ndm =ndm
-    print(f"\t|> Found {H.ndm} DM particles after masking")
+    if(H.verbose): print(f"\t|> Found {H.ndm} DM particles after masking")
 
     H.nbodies = H.ndm + H.nstar
     # Read all parts
@@ -454,7 +454,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
                 r = pool.apply_async(_read_ramses_new_1010, (icpu1, kwargs))
                 async_results.append((icpu1, r))
             npart = 0
-            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu"):
+            for icpu1, r in tqdm(async_results, total=H.ncpu, desc=f"\t|  Reading parts(nbPes={H.nbPes})", unit="cpu", disable=(not H.verbose)):
                 try:
                     npart += r.get(timeout=300)  # 300 sec
                 except TimeoutError:
@@ -462,8 +462,8 @@ def read_ramses_new_101(repository, rver='Ra3'):
                     raise
         signal.signal(signal.SIGTERM, H.flush)
     H.npart = npart
-    print(f"\t|> Reading parts done", flush=True)
-    print(f"\t|> Found {H.npart} (DM+Star) particles after masking")
+    if(H.verbose): print(f"\t|> Reading parts done", flush=True)
+    if(H.verbose): print(f"\t|> Found {H.npart} (DM+Star) particles after masking")
     H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_10', (H.npart,), dtype=np.float64)
@@ -478,33 +478,33 @@ def read_ramses_new_101(repository, rver='Ra3'):
     dmmassres = np.min(mem['mass_10'][:H.ndm])*H.mboxp*1e11
     starmassres = np.min(mem['mass_10'][H.ndm:])*H.mboxp*1e11
     H.massp   = np.min(mem['mass_10'][:H.ndm])
-    print(f"\t|> DM particle mass (in M_sun)               = {dmmassres}")
-    print(f"\t|> Star particle mass (in M_sun)             = {starmassres}")
+    if(H.verbose): print(f"\t|> DM particle mass (in M_sun)               = {dmmassres}")
+    if(H.verbose): print(f"\t|> Star particle mass (in M_sun)             = {starmassres}")
     if(H.RENORM):
         massres /= mtot
         H.massp /= mtot
-        print(f"\t> particle mass (in M_sun) after renorm  = {massres}")
+        if(H.verbose): print(f"\t> particle mass (in M_sun) after renorm  = {massres}")
     if(H.BIG_RUN):
         H.deallocate('mass_10')
 
     if (H.zoomin):
-        print(f"\t|> Applying zoom-in mask to particles...")
+        if(H.verbose): print(f"\t|> Applying zoom-in mask to particles...")
         H.allocate('refmask_10', (H.npart,), dtype=np.bool_)
         goodmask = mem['mass_10'] < 10*H.massp
         goodpos = mem['pos_10'][goodmask]
         xmin, xmax = np.min(goodpos[:,0]), np.max(goodpos[:,0])
         ymin, ymax = np.min(goodpos[:,1]), np.max(goodpos[:,1])
         zmin, zmax = np.min(goodpos[:,2]), np.max(goodpos[:,2])
-        print(f"\t|> Zoom-in box (in box units): ")
-        print(f"\t|    x=[{xmin:.3f}, {xmax:.3f}]")
-        print(f"\t|    y=[{ymin:.3f}, {ymax:.3f}]")
-        print(f"\t|    z=[{zmin:.3f}, {zmax:.3f}]")
+        if(H.verbose): print(f"\t|> Zoom-in box (in box units): ")
+        if(H.verbose): print(f"\t|    x=[{xmin:.3f}, {xmax:.3f}]")
+        if(H.verbose): print(f"\t|    y=[{ymin:.3f}, {ymax:.3f}]")
+        if(H.verbose): print(f"\t|    z=[{zmin:.3f}, {zmax:.3f}]")
         H.zoombox = np.array([xmin,xmax,ymin,ymax,zmin,zmax])
         goodmask = goodmask & (mem['pos_10'][:,0] >= xmin) & (mem['pos_10'][:,0] <= xmax) & (mem['pos_10'][:,1] >= ymin) & (mem['pos_10'][:,1] <= ymax) & (mem['pos_10'][:,2] >= zmin) & (mem['pos_10'][:,2] <= zmax)
         mem['refmask_10'][:] = goodmask
-        print(f"\t|> Zoom-in mask applied: {np.sum(goodmask)} particles kept out of {H.npart} ({100*np.sum(goodmask)/H.npart:.2f}%)", flush=True)
+        if(H.verbose): print(f"\t|> Zoom-in mask applied: {np.sum(goodmask)} particles kept out of {H.npart} ({100*np.sum(goodmask)/H.npart:.2f}%)", flush=True)
 
-    print(f"\t------------------------------------------------------------------\n", flush=True)
+    if(H.verbose): print(f"\t------------------------------------------------------------------\n", flush=True)
 
 #***********************************************************************
 def write_tree_brick_1d():

@@ -308,7 +308,7 @@ def new_step_1():
     timereport = []
 
     # read N-body info for this new step
-    print(f"\n\n\n$$ Read data...", flush=True)
+    if(H.verbose): print(f"\n\n\n$$ Read data...", flush=True)
     _ref = time.time()
     read_data_10()
     if(H.nbodies<H.nMembers):
@@ -325,30 +325,30 @@ def new_step_1():
         if(H.allocated('refmask_10')): H.deallocate('refmask_10')
         if(len(H.liste_halos_o0)>0): H.liste_halos_o0 = np.empty(0, dtype=H.halo_dtype)
         return
-    print(f"\n$$ Read data done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Read data done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- read_data', time.time()-_ref))
 
     # determine the age of the universe and current values of cosmological parameters
-    print(f"\n$$ Determine the Age...", flush=True)
+    if(H.verbose): print(f"\n$$ Determine the Age...", flush=True)
     _ref = time.time()
     det_age_11()
-    print(f"\n$$ Determine the Age done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Determine the Age done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- det_age', time.time()-_ref))
     
     # first compute the virial overdensity (with respect to the average density of the universe) 
     # predicted by the top-hat collapse model at this redshift 
-    print(f"\n$$ Compute the virial overdensity...", flush=True)
+    if(H.verbose): print(f"\n$$ Compute the virial overdensity...", flush=True)
     _ref = time.time()
     virial_12()
-    print(f"\n$$ Compute the virial overdensity done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Compute the virial overdensity done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- virial', time.time()-_ref))
 
-    print(f"\n$$ Make halos...", flush=True)
+    if(H.verbose): print(f"\n$$ Make halos...", flush=True)
     _ref = time.time()
     if(H.method!="FOF"):
        H.allocate('whereIam_parts',H.nbodies,dtype=np.int32)
     timerecords = make_halos_13()  
-    print(f"\n$$ Make halos done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Make halos done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- make_halos', time.time()-_ref))
     if timerecords is not None:
         for itr in timerecords:
@@ -379,7 +379,7 @@ def new_step_1():
     # # until there are no more members (last particles points to -1)
     # H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
 
-    print(f"\n$$ Make linked list...", flush=True)
+    if(H.verbose): print(f"\n$$ Make linked list...", flush=True)
     _ref = time.time()
     make_linked_list_14()
 
@@ -425,7 +425,7 @@ def new_step_1():
     full_path = os.path.abspath(f'ncontam_halos{H.prefix}.dat')
     os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
-    print(f"\n$$ Make linked list done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Make linked list done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- make_linked_list', time.time()-_ref))
 
     # until now we were using code units for positions and velocities
@@ -443,7 +443,7 @@ def new_step_1():
     init_halos_16()
 
 
-    print(f"\n$$ Calculate halo properties...", flush=True)
+    if(H.verbose): print(f"\n$$ Calculate halo properties...", flush=True)
     _ref = time.time()
     fagor=None
     if(H.ANG_MOM_OF_R):
@@ -477,7 +477,7 @@ def new_step_1():
             
             _compute_halo_props(i1, member=member, fagor=fagor, printdatacheckhalo=printdatacheckhalo)
     else:
-        
+        callback=None
         if H.verbose:
             pbar = tqdm(total = H.nb_of_halos + H.nb_of_subhalos, desc = f"[Ncpu={H.nbPes}] Calc halo props")
             callback = lambda *args: pbar.update()
@@ -509,14 +509,14 @@ def new_step_1():
         fagor.close()
         full_path = os.path.abspath(filename)
         os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
-    print(f"\n$$ Calculate halo properties done ({time.time()-_ref:.2f} sec).", flush=True)
+    if(H.verbose): print(f"\n$$ Calculate halo properties done ({time.time()-_ref:.2f} sec).", flush=True)
     timereport.append(('- calc_halo_props', time.time()-_ref))
 
-    print(f"\n$$ Write tree_bricks...", flush=True)
+    if(H.verbose): print(f"\n$$ Write tree_bricks...", flush=True)
     _ref = time.time()
     # write_tree_brick_1d()
     write_tree_brick_hdf()
-    print(f"\n$$ Write tree_bricks done ({time.time()-_ref:.2f} sec)", flush=True)
+    if(H.verbose): print(f"\n$$ Write tree_bricks done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- write_tree_bricks', time.time()-_ref))
 
     # H.liste_halos_o0 = []
