@@ -13,7 +13,7 @@ rhot           =  80.0    ! parameter for adaptahop (80 coreespond to b = 0.2)
 fudge          = 4.       ! parameter for adaptahop (usually 4.) 
 fudgepsilon    = 0.001    ! parameter for adaptahop (usually 0.05)
 alphap         = 1.0      ! parameter for adaptahop (usually 1.)
-verbose        = .true.  ! verbose parameter for both halo finder
+verbose        = .true.   ! verbose parameter for both halo finder
 megaverbose    = .false.  ! parameter for adaptahop
 nsteps         =  200      ! Number of time steps to analyse
 FlagPeriod     =  1       ! Periodic boundaries (1:True)

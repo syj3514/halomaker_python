@@ -374,11 +374,13 @@ module neiKDtree
    contains
 
 !=======================================================================
-subroutine compute_adaptahop(pos_in, mass_in)
+subroutine compute_adaptahop(pos_in, mass_in, refmask_in, zoombox_in)
 !=======================================================================
    implicit none
    real(kind=8), intent(in)         :: pos_in(:,:)
    real(kind=8), intent(in)         :: mass_in(:)
+   real(kind=8), intent(in)         :: zoombox_in(:)
+   logical, intent(in)              :: refmask_in(:)
 
 
    allocate(liste_parts(1:nusedpart))
@@ -391,6 +393,11 @@ subroutine compute_adaptahop(pos_in, mass_in)
    pos(:,:) = pos_in(:,:)
    allocate(mass(npart))
    mass(:) = mass_in(:)
+
+   allocate(refmask(npart))
+   refmask(:) = refmask_in(:)
+   allocate(zoombox(1:6))
+   zoombox(:) = zoombox_in(:)
 
    call create_tree_structure
    call compute_mean_density_and_np
@@ -535,7 +542,7 @@ subroutine compute_mean_density_and_np
 !=======================================================================
    implicit none
 
-   integer(kind=4)                     :: ipar
+   integer(kind=4)                     :: ipar, icount
    real(kind=8), dimension(0:nvoisins) :: dist2
    integer, dimension(nvoisins)        :: iparnei
    real(kind=8)                        :: densav
@@ -557,9 +564,14 @@ subroutine compute_mean_density_and_np
    !$OMP PARALLEL DEFAULT(SHARED) PRIVATE(ipar,dist2,iparnei)
    !$OMP DO
    do ipar=1,npart
-      call find_nearest_parts(ipar,dist2,iparnei)
-      call compute_density(ipar,dist2,iparnei)
-      iparneigh(1:nhop,ipar)=iparnei(1:nhop)
+      if (refmask(ipar)) then
+         call find_nearest_parts(ipar,dist2,iparnei)
+         call compute_density(ipar,dist2,iparnei)
+         iparneigh(1:nhop,ipar)=iparnei(1:nhop)
+      else
+         iparneigh(1:nhop,ipar)=0
+         density(ipar)=0.d0
+      endif
    enddo
    !$OMP END DO
    !$OMP END PARALLEL
@@ -570,8 +582,12 @@ subroutine compute_mean_density_and_np
       write(errunit,*) '        Calc average density...'
       densav=0.d0
 
+      icount=0
       do ipar=1,npart
-         densav=(densav*dble(ipar-1)+dble(density(ipar)))/dble(ipar)
+         if (refmask(ipar)) then
+            icount = icount+1
+            densav=(densav*dble(icount-1)+dble(density(ipar)))/dble(icount)
+         endif
       enddo
 
       write(errunit,*) '    --> Average density :',densav
@@ -1778,6 +1794,7 @@ recursive subroutine walk_tree2(icellidin,poshere,dist2,    &
    integer(kind=4) :: icellidin,icell_identity,iparid,inccellpart,ic,iparcell
    real(kind=8)    :: poshere(3),dist2(0:nvoisins)
    real(kind=8)    :: dx,dy,dz,distance2,sizec,r2max
+   real(kind=8)    :: xl,xr,yl,yr,zl,zr,xc,yc,zc
    integer(kind=4) :: idist,inc
    integer(kind=4) :: icellid_out
    real(kind=8)    :: discell2(0:8)
@@ -1786,6 +1803,7 @@ recursive subroutine walk_tree2(icellidin,poshere,dist2,    &
 
    integer(kind=4) :: i,npart_pos_this_node
    real(kind=8)    :: distance2p
+   logical::ifok
 
    icell_identity=firstchild(icellidin)
    inc=1
@@ -1798,12 +1816,49 @@ recursive subroutine walk_tree2(icellidin,poshere,dist2,    &
    do while (icell_identity.ne.0)
       sizec=size_cell(icell_identity)
 
-      dx=abs(pos_cell(1,icell_identity)-poshere(1))
-      dy=abs(pos_cell(2,icell_identity)-poshere(2))
-      dz=abs(pos_cell(3,icell_identity)-poshere(3))
-      dx=max(0.d0,min(dx,xlong-dx)-sizec)
-      dy=max(0.d0,min(dy,ylong-dy)-sizec)
-      dz=max(0.d0,min(dz,zlong-dz)-sizec)
+      ifok=.true.
+      xc=pos_cell(1,icell_identity)
+      xl=xc-sizec
+      if(xl .gt. zoombox(2)) then
+         ifok=.false.
+      else
+         xr=xc+sizec
+         if(xr .lt. zoombox(1)) then
+            ifok=.false.
+         else
+            yc=pos_cell(2,icell_identity)
+            yl=yc-sizec
+            if(yl .gt. zoombox(4)) then
+               ifok=.false.
+            else
+               yr=yc+sizec
+               if(yr .lt. zoombox(3)) then
+                  ifok=.false.
+               else
+                  zc=pos_cell(3,icell_identity)
+                  zl=zc-sizec
+                  if(zl .gt. zoombox(6)) then
+                     ifok=.false.
+                  else
+                     zr=zc+sizec
+                     if(zr .lt. zoombox(5)) ifok=.false.
+                  endif
+               endif
+            endif
+         endif
+      endif
+
+      if (.not.ifok) then
+         icell_identity=sister(icell_identity)
+         cycle
+      endif
+
+      dx=abs(xc-poshere(1))
+      dy=abs(yc-poshere(2))
+      dz=abs(zc-poshere(3))
+      dx=max(0.d0,min(dx, xlong-dx)-sizec)
+      dy=max(0.d0,min(dy, ylong-dy)-sizec)
+      dz=max(0.d0,min(dz, zlong-dz)-sizec)
       distance2=dx*dx+dy*dy+dz*dz
 
       if (distance2.lt.r2max) then
@@ -1833,16 +1888,17 @@ recursive subroutine walk_tree2(icellidin,poshere,dist2,    &
             do i=npart_pos_this_node+1,npart_pos_this_node+mass_cell(icellid_out)
                iparcell=idpart(i)
                if (iparcell .eq. iparid) cycle
+               if(.not. refmask(iparcell)) cycle
                dx=abs(pos(1,iparcell)-poshere(1))
-               dx=max(0.d0,min(dx,xlong-dx))
+               ! dx=max(0.d0,min(dx,xlong-dx))
                distance2p=dx*dx
                if (distance2p .ge. r2max) cycle
                dy=abs(pos(2,iparcell)-poshere(2))
-               dy=max(0.d0,min(dy,ylong-dy))
+               ! dy=max(0.d0,min(dy,ylong-dy))
                distance2p=distance2p+dy*dy
                if (distance2p .ge. r2max) cycle
                dz=abs(pos(3,iparcell)-poshere(3))
-               dz=max(0.d0,min(dz,zlong-dz))
+               ! dz=max(0.d0,min(dz,zlong-dz))
                distance2p=distance2p+dz*dz
                ! distance2p = dx*dx + dy*dy + dz*dz
                if (distance2p .lt. r2max) then 
@@ -1966,6 +2022,7 @@ recursive subroutine create_KDtree(nlevel,pos_this_node,npart_this_node, &
    integer(kind=4)           :: incsubcell(0:7),nsubcell(0:7)
    real(kind=8)              :: pos_this_node_out(3)
    integer(kind=4)           :: idmother,idmother_out
+   logical :: ifok
 
    integer(kind=4)           :: ncellmx_old
    integer, allocatable      :: mass_cell_tmp(:),sister_tmp(:),firstchild_tmp(:)
@@ -2077,10 +2134,34 @@ recursive subroutine create_KDtree(nlevel,pos_this_node,npart_this_node, &
    size_child = size_my*0.5d0
    do j=0,7
       if (incsubcell(j) <= 0) cycle
-
+      
+      ifok=.true.
       pos_this_node_out(1)=pos_this_node(1) + size_child * pos_ref_kdtree(1,j)
-      pos_this_node_out(2)=pos_this_node(2) + size_child * pos_ref_kdtree(2,j)
-      pos_this_node_out(3)=pos_this_node(3) + size_child * pos_ref_kdtree(3,j)
+      if((pos_this_node_out(1)-size_child) .gt. zoombox(2)) then
+         ifok=.false.
+      else
+         if((pos_this_node_out(1)+size_child) .lt. zoombox(1)) then
+            ifok=.false.
+         else
+            pos_this_node_out(2)=pos_this_node(2) + size_child * pos_ref_kdtree(2,j)
+            if((pos_this_node_out(2)-size_child) .gt. zoombox(4)) then
+               ifok=.false.
+            else
+               if((pos_this_node_out(2)+size_child) .lt. zoombox(3)) then
+                  ifok=.false.
+               else
+                  pos_this_node_out(3)=pos_this_node(3) + size_child * pos_ref_kdtree(3,j)
+                  if((pos_this_node_out(3)-size_child) .gt. zoombox(6)) then
+                     ifok=.false.
+                  else
+                     if((pos_this_node_out(3)+size_child) .lt. zoombox(5)) ifok=.false.
+                  endif
+               endif
+            endif
+         endif
+      endif
+      if(.not.ifok) cycle
+
       npart_pos_this_node_out=npart_pos_this_node+nsubcell(j)
       npart_this_node_out=incsubcell(j)
       call create_KDtree(nlevel_out,pos_this_node_out,npart_this_node_out, &

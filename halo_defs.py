@@ -288,7 +288,7 @@ gravsoft = 'cubsplin' # type of gravitational softening
 nbPes = 1 # obsolete vars for reading treecode format
 nsteps = 1 # number of timesteps
 alpha = np.float64(1.0); tnow = np.float64(1.0)
-nbodies = 1 # number of particles in the simulation
+nusedpart = 1 # number of particles in the simulation
 nMembers = 1 # minimal number of particles in a fof halo
 b_init = np.float64(1.0) # linking length parameter of the fof at z=0
 profile = 'TSIS' # type of halo profile (only isothermal_sphere yet)
@@ -310,7 +310,7 @@ output_dir = "."
 file_num = "00001"
 numstep = 1
 # errunit = 0
-write_resim_masses = True # for writing resim_masses.dat file
+write_resim_masses = False # for writing resim_masses.dat file
 dchmod = 0o755
 fchmod = 0o644
 uid = -1

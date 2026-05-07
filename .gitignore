@@ -18,3 +18,8 @@ shm_clean.sh
 main.py
 pyrun.sh
 *.ipynb
+*linux-gnu.so
+fortrun.sh
+nologpy.sh
+param_test.sh
+trashcan

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#FILES='create_nodes.f90'
-FILES="compute_adaptahop.f90"
+#FILES='compute_adaptahop_omp.f90'
+FILES="compute_adaptahop.f90 compute_adaptahop_zoomin.f90"
 PYTHON="uv run python"
 #F2PY=f2py
 F2PY="$PYTHON -m numpy.f2py"

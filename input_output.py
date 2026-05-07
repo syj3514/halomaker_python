@@ -164,7 +164,7 @@ def read_ramses_100(repository):
            npart2, = f.read_ints()
        H.npart = H.npart+npart2
     
-    H.nbodies = H.npart
+    H.nusedpart = H.npart
     print(f"> Found {H.npart} particles")
     print(f"> Reading positions and masses...")
     
@@ -398,13 +398,13 @@ def read_ramses_new_101(repository, rver='Ra3'):
 
     if(H.verbose): print(f"\t|> Found {H.npart} Total particles")
     H.nstar = nstar
-    H.nbodies = H.npart
+    H.nusedpart = H.npart
     if(H.verbose): print(f"\t|        {H.npart-H.nstar} other particles")
     if(H.verbose): print(f"\t|        {nstar} star particles")
     if(H.verbose): print(f"\t|> Reading positions, velocities and masses...")
-    H.allocate('pos_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
-    H.allocate('vel_tmp_101', (H.nbodies, H.ndim), dtype=np.float64)
-    H.allocate('mass_tmp_101', (H.nbodies,), dtype=np.float64)
+    H.allocate('pos_tmp_101', (H.nusedpart, H.ndim), dtype=np.float64)
+    H.allocate('vel_tmp_101', (H.nusedpart, H.ndim), dtype=np.float64)
+    H.allocate('mass_tmp_101', (H.nusedpart,), dtype=np.float64)
     H.massalloc = True
   
     # Count only DM particles
@@ -435,7 +435,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
     H.ndm =ndm
     if(H.verbose): print(f"\t|> Found {H.ndm} DM particles after masking")
 
-    H.nbodies = H.ndm + H.nstar
+    H.nusedpart = H.ndm + H.nstar
     # Read all parts
     kwargs['dmcount'] = False
     iterobj = range(1,H.ncpu+1)
@@ -467,9 +467,11 @@ def read_ramses_new_101(repository, rver='Ra3'):
     H.allocate('pos_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('vel_10', (H.npart, H.ndim), dtype=np.float64)
     H.allocate('mass_10', (H.npart,), dtype=np.float64)
+    H.allocate('id_10', (H.npart,), dtype=np.int32)
     mem['pos_10'][:H.npart, :] = mem['pos_tmp_101'][:H.npart, :]
     mem['vel_10'][:H.npart, :] = mem['vel_tmp_101'][:H.npart, :]
     mem['mass_10'][:H.npart] = mem['mass_tmp_101'][:H.npart]
+    mem['id_10'][:] = np.arange(1,H.npart+1)
     H.deallocate('pos_tmp_101','vel_tmp_101','mass_tmp_101')
 
     mtot = np.sum(mem['mass_10'])
@@ -503,6 +505,7 @@ def read_ramses_new_101(repository, rver='Ra3'):
         goodmask = goodmask & (mem['pos_10'][:,0] >= xmin) & (mem['pos_10'][:,0] <= xmax) & (mem['pos_10'][:,1] >= ymin) & (mem['pos_10'][:,1] <= ymax) & (mem['pos_10'][:,2] >= zmin) & (mem['pos_10'][:,2] <= zmax)
         mem['refmask_10'][:] = goodmask
         if(H.verbose): print(f"\t|> Zoom-in mask applied: {np.sum(goodmask)} particles kept out of {H.npart} ({100*np.sum(goodmask)/H.npart:.2f}%)", flush=True)
+        H.nusedpart = np.sum(goodmask)
 
     if(H.verbose): print(f"\t------------------------------------------------------------------\n", flush=True)
 
@@ -526,7 +529,7 @@ def write_tree_brick_1d():
     if(H.BIG_RUN):
         if(H.write_resim_masses):
             f44 = FortranFile(f'{H.output_dir}/resim_masses{H.prefix}.dat', 'w')
-            f44.write_record(H.nbodies)
+            f44.write_record(H.nusedpart)
             f44.write_record(mem['mass_10'])
             f44.close()
             full_path = os.path.abspath(f'{H.output_dir}/resim_masses{H.prefix}.dat')
@@ -548,7 +551,7 @@ def write_tree_brick_1d():
     f44 = FortranFile(filename, 'w')
     print()
     print('> Output data to build halo merger tree to: ',filename)
-    f44.write_record(H.nbodies)
+    f44.write_record(H.nusedpart)
     f44.write_record(H.massp)
     f44.write_record(H.aexp)
     f44.write_record(H.omega_t)
@@ -651,7 +654,7 @@ def write_tree_brick_hdf():
     if(H.BIG_RUN):
         if(H.write_resim_masses):
             f44 = FortranFile(f'{H.output_dir}/resim_masses{H.prefix}.dat', 'w')
-            f44.write_record(H.nbodies)
+            f44.write_record(H.nusedpart)
             f44.write_record(mem['mass_10'])
             f44.close()
             full_path = os.path.abspath(f'{H.output_dir}/resim_masses{H.prefix}.dat')
@@ -680,7 +683,8 @@ def write_tree_brick_hdf():
         f44.create_group('header')
         header = f44['header']
         # Snapshot data
-        header.attrs['nbodies'] = H.nbodies
+        header.attrs['npart'] = H.npart
+        header.attrs['nusedpart'] = H.nusedpart
         header.attrs['massp'] = H.massp
         header.attrs['aexp'] = H.aexp
         header.attrs['omega_t'] = H.omega_t
@@ -739,6 +743,7 @@ def write_tree_brick_hdf():
         grp = f44.create_group('member')
         grp.create_dataset('index', data=whereIam_idxs, compression='lzf')
         pids = pids0_groupsorted+1 # 0-based to 1-based
+        
         grp.create_dataset('pids', data=pids, compression='lzf')
         if H.dump_dms:
             iterator = range(H.nb_of_halos + H.nb_of_subhalos)

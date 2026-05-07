@@ -311,18 +311,19 @@ def new_step_1():
     if(H.verbose): print(f"\n\n\n$$ Read data...", flush=True)
     _ref = time.time()
     read_data_10()
-    if(H.nbodies<H.nMembers):
+    if(H.nusedpart<H.nMembers):
         print()
         print('ERROR in this snapshot:')
-        print('> nbodies=',H.nbodies)
+        print('> nusedpart=',H.nusedpart)
         print('> nMembers=',H.nMembers)
-        print('> nbodies < nMembers_threshold !')
+        print('> nusedpart < nMembers_threshold !')
         print('> Skip this step')
         if(H.allocated('pos_10')): H.deallocate('pos_10')
         if(H.allocated('vel_10')): H.deallocate('vel_10')
         if(H.allocated('mass_10')): H.deallocate('mass_10')
         if(H.allocated('whereIam_parts')): H.deallocate('whereIam_parts')
         if(H.allocated('refmask_10')): H.deallocate('refmask_10')
+        if(H.allocated('id_10')): H.deallocate('id_10')
         if(len(H.liste_halos_o0)>0): H.liste_halos_o0 = np.empty(0, dtype=H.halo_dtype)
         return
     if(H.verbose): print(f"\n$$ Read data done ({time.time()-_ref:.2f} sec)", flush=True)
@@ -346,7 +347,7 @@ def new_step_1():
     if(H.verbose): print(f"\n$$ Make halos...", flush=True)
     _ref = time.time()
     if(H.method!="FOF"):
-       H.allocate('whereIam_parts',H.nbodies,dtype=np.int32)
+       H.allocate('whereIam_parts',H.nusedpart,dtype=np.int32)
     timerecords = make_halos_13()  
     if(H.verbose): print(f"\n$$ Make halos done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- make_halos', time.time()-_ref))
@@ -357,8 +358,8 @@ def new_step_1():
     if(H.Test_FOF):
         filelisteparts = f"whereIam_parts_{H.numstep}"
         with FortranFile(filelisteparts, 'w') as f:
-            f.write_record(H.nbodies,H.nb_of_halos)
-            f.write_record(mem['whereIam_parts'][:H.nbodies])
+            f.write_record(H.nusedpart,H.nb_of_halos)
+            f.write_record(mem['whereIam_parts'][:H.nusedpart])
         full_path = os.path.abspath(filelisteparts)
         os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
         # reset nb of halos not to construct halos
@@ -377,7 +378,7 @@ def new_step_1():
     # H.allocate('nb_of_parts_o0_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
     # # make a linked list of the particles so that each member of a halo points to the next 
     # # until there are no more members (last particles points to -1)
-    # H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
+    # H.allocate('linked_list_oo_1', 1+H.nusedpart+1, dtype=np.int32)
 
     if(H.verbose): print(f"\n$$ Make linked list...", flush=True)
     _ref = time.time()
@@ -419,11 +420,12 @@ def new_step_1():
             else:
                 n_halo_contam += 1
     print('> # of halos, # of CONTAMINATED halos :',H.nb_of_halos,n_halo_contam,H.nb_of_subhalos,n_subs_contam)
-    f222 = open(f'ncontam_halos{H.prefix}.dat', 'a+')
-    f222.write(f'{H.numero_step:6d} {H.nb_of_halos:6d} {n_halo_contam:6d} {H.nb_of_subhalos:6d} {n_subs_contam:6d}\n')
-    f222.close()
-    full_path = os.path.abspath(f'ncontam_halos{H.prefix}.dat')
-    os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
+    if(H.verbose):
+        f222 = open(f'ncontam_halos{H.prefix}.dat', 'a+')
+        f222.write(f'{H.numero_step:6d} {H.nb_of_halos:6d} {n_halo_contam:6d} {H.nb_of_subhalos:6d} {n_subs_contam:6d}\n')
+        f222.close()
+        full_path = os.path.abspath(f'ncontam_halos{H.prefix}.dat')
+        os.chmod(full_path, H.fchmod); os.chown(full_path, H.uid, H.gid)
 
     if(H.verbose): print(f"\n$$ Make linked list done ({time.time()-_ref:.2f} sec)", flush=True)
     timereport.append(('- make_linked_list', time.time()-_ref))
@@ -638,7 +640,7 @@ def make_linked_list_14():
     # H.allocate('nb_of_parts_o0_1', H.nb_of_halos+H.nb_of_subhalos+1, dtype=np.int32)
     # make a linked list of the particles so that each member of a halo points to the next 
     # until there are no more members (last particles points to -1)
-    # H.allocate('linked_list_oo_1', 1+H.nbodies+1, dtype=np.int32)
+    # H.allocate('linked_list_oo_1', 1+H.nusedpart+1, dtype=np.int32)
 
     # current_ptr_o0 = np.zeros(1+H.nb_of_halos+H.nb_of_subhalos, dtype=np.int32)-1
     # # initialization of linked list
@@ -647,14 +649,14 @@ def make_linked_list_14():
     # mem['linked_list_oo_1'][:] = -1
  
     # # make linked list: a few (necessary) explanations ....
-    # #   1/ hindex1 (whereIam_parts(i)) is the number of the halo to which belongs particle i (i is in [1..nbodies]) 
+    # #   1/ hindex1 (whereIam_parts(i)) is the number of the halo to which belongs particle i (i is in [1..nusedpart]) 
     # #   2/ first_part_oo(j) is the number of the first particle of halo j  (j is in [1..nhalo])
     # #   3/ current_ptr_o0(hindex1) is the number of the latest particle found in halo number hindex1 
     # # to sum up, first_part_oo(i) contains the number of the first particle of halo i,
     # # linked_list_oo(first_part_oo(i)) the number of the second particle of halo i, etc ... until 
     # # the last particle which points to number -1
 
-    # for pindex0 in range(H.nbodies):
+    # for pindex0 in range(H.nusedpart):
     #     hindex1 = mem['whereIam_parts'][pindex0]
     #     if(hindex1>(H.nb_of_halos+H.nb_of_subhalos)): raise IndexError('error in whereIam_parts')
     #     if (mem['first_part_oo_1'][hindex1] == -1):

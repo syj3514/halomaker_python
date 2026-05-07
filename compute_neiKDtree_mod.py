@@ -38,7 +38,10 @@ if H.FORTRAN:
     # import create_nodes
     # from create_nodes import neikdtree
     # from create_nodes import fhalo_defs as fH
-    from compute_adaptahop import neikdtree
+    if H.zoomin:
+        from compute_adaptahop_zoomin import neikdtree
+    else:
+        from compute_adaptahop import neikdtree
 
 #=======================================================================
 def compute_adaptahop_131():
@@ -50,10 +53,15 @@ def compute_adaptahop_131():
     if H.FORTRAN:
         sync_fortran()
         refmask = mem['refmask_10'] if H.zoomin else np.empty(1, dtype=np.bool_)
-        neikdtree.compute_adaptahop(
-            np.asfortranarray(mem['pos_10']),
-            np.asfortranarray(mem['mass_10']),
-            np.asfortranarray(refmask), np.asfortranarray(H.zoombox))
+        if H.zoomin:
+            neikdtree.compute_adaptahop(
+                np.asfortranarray(mem['pos_10'].T),
+                np.asfortranarray(mem['mass_10']),
+                np.asfortranarray(refmask), np.asfortranarray(H.zoombox))
+        else:
+            neikdtree.compute_adaptahop(
+                np.asfortranarray(mem['pos_10'].T),
+                np.asfortranarray(mem['mass_10']))
         timerecords.append(('    compute_adaptahop', -time.time()+ref)); ref = time.time()
         
         H.allocate('density_1312',H.npart, dtype=np.float64)
